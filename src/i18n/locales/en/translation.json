@@ -149,6 +149,7 @@
         "none": "No shortcuts configured",
         "notFound": "Shortcut not found",
         "pressKeys": "Press keys...",
+        "fnKeySupport": "On macOS, you can use the fn key alone for push-to-talk recording (HandyKeys implementation only)",
         "bindings": {
           "transcribe": {
             "name": "Transcribe Shortcut",

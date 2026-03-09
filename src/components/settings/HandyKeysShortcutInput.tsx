@@ -265,6 +265,12 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     binding.description,
   );
 
+  // Show fn key hint for transcribe shortcut on macOS
+  const showFnKeyHint =
+    shortcutId === "transcribe" &&
+    osType === "macos" &&
+    t("settings.general.shortcut.fnKeySupport");
+
   return (
     <SettingContainer
       title={translatedName}
@@ -295,6 +301,11 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
           disabled={isUpdating(`binding_${shortcutId}`)}
         />
       </div>
+      {showFnKeyHint && (
+        <p className="text-xs text-mid-gray mt-2">
+          {t("settings.general.shortcut.fnKeySupport")}
+        </p>
+      )}
     </SettingContainer>
   );
 };

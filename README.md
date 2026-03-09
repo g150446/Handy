@@ -101,6 +101,21 @@ handy --start-hidden --no-tray
 > /Applications/Handy.app/Contents/MacOS/Handy --toggle-transcription
 > ```
 
+### macOS fn Key Support (Push-to-Talk)
+
+On macOS, you can use the `fn` (Function) key alone as a push-to-talk shortcut:
+
+1. Open **Settings → General**
+2. Click on the **Transcribe Shortcut** button
+3. Press and hold the `fn` key
+4. Release to save
+
+Once configured:
+- **Hold `fn`** to start recording
+- **Release `fn`** to stop recording and transcribe
+
+> **Note:** This feature requires the **HandyKeys** keyboard implementation (default on macOS). The Tauri global shortcut backend does not support the `fn` key.
+
 ## Known Issues & Current Limitations
 
 This project is actively being developed and has some [known issues](https://github.com/cjpais/Handy/issues). We believe in transparency about the current state:
