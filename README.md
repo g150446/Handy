@@ -56,7 +56,12 @@ xcode-select --install
 # Install Rust (if not already installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install Bun package manager (if not already installed)
+# Install a package manager (choose one):
+
+# Option A: npm (comes with Node.js)
+curl -fsSL https://nodejs.org | bash
+
+# Option B: Bun (faster alternative)
 curl -fsSL https://bun.sh/install | bash
 ```
 
@@ -68,11 +73,23 @@ git clone https://github.com/cjpais/Handy.git
 cd Handy
 
 # 2. Install dependencies
+
+# Using npm (recommended for consistency)
+npm install
+
+# Or using Bun (faster, but requires Bun for all steps)
 bun install
 
 # 3. Build for production
+
+# Using npm
+npm run tauri build
+
+# Or using Bun (must match step 2)
 bun run tauri build
 ```
+
+> **Important:** Use the same package manager for both `install` and `build` steps. Mixing npm and Bun can cause dependency conflicts.
 
 #### Install the Built Application
 
@@ -112,6 +129,10 @@ rm -rf ~/Library/Application\ Support/com.pais.handy/
 For testing without building a release version:
 
 ```bash
+# Using npm
+npm run tauri dev
+
+# Or using Bun
 bun tauri dev
 ```
 
