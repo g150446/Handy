@@ -43,7 +43,77 @@ The process is entirely local:
 4. Configure your preferred keyboard shortcuts in Settings
 5. Start transcribing!
 
-### Development Setup
+### Building from Source (macOS)
+
+To build Handy from source on macOS:
+
+#### Prerequisites
+
+```bash
+# Install Xcode Command Line Tools
+xcode-select --install
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install Bun package manager (if not already installed)
+curl -fsSL https://bun.sh/install | bash
+```
+
+#### Build Steps
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/cjpais/Handy.git
+cd Handy
+
+# 2. Install dependencies
+bun install
+
+# 3. Build for production
+bun run tauri build
+```
+
+#### Install the Built Application
+
+After building, the app bundle is located at:
+```
+src-tauri/target/release/bundle/macos/Handy.app
+```
+
+**Option 1: Copy to Applications folder**
+```bash
+cp -r src-tauri/target/release/bundle/macos/Handy.app /Applications/
+```
+
+**Option 2: Create DMG installer**
+
+The build process also generates a DMG file at:
+```
+src-tauri/target/release/bundle/dmg/Handy_*.dmg
+```
+
+Double-click the DMG file and drag Handy.app to your Applications folder.
+
+#### Uninstall Previous Version (Optional)
+
+If you have an existing Handy installation:
+
+```bash
+# Remove the old application
+sudo rm -rf /Applications/Handy.app
+
+# Optional: Remove settings and data (use with caution)
+rm -rf ~/Library/Application\ Support/com.pais.handy/
+```
+
+#### Development Mode
+
+For testing without building a release version:
+
+```bash
+bun tauri dev
+```
 
 For detailed build instructions including platform-specific requirements, see [BUILD.md](BUILD.md).
 
