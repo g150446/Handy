@@ -474,6 +474,33 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
 
+            // BLE auto-connect: if the last session used BLE, reconnect in the background.
+            {
+                let auto_settings = settings::get_settings(&app_handle);
+                if auto_settings.audio_source == settings::AudioSource::Ble {
+                    if let Some(addr) = auto_settings.ble_device_address.clone() {
+                        let ah = app_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let ble = ah.state::<Arc<crate::ble::BleManager>>();
+                            let tm = ah.state::<Arc<TranscriptionManager>>();
+                            log::info!("BLE auto-connect: {}", addr);
+                            match ble.connect_by_address(&addr).await {
+                                Ok(()) => {
+                                    tm.initiate_model_load();
+                                }
+                                Err(e) => {
+                                    log::error!("BLE auto-connect failed: {e}");
+                                    // Fall back to microphone so the app is usable.
+                                    let mut s = settings::get_settings(&ah);
+                                    s.audio_source = settings::AudioSource::Microphone;
+                                    settings::write_settings(&ah, s);
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {
                 tray::set_tray_visibility(&app_handle, false);

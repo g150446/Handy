@@ -38,6 +38,7 @@ use btleplug::api::{
 use btleplug::platform::{Manager, Peripheral};
 use futures_util::StreamExt;
 use log::{debug, error, info, warn};
+use tauri::Emitter;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::{Arc, Mutex};
@@ -265,6 +266,11 @@ impl BleManager {
         // Allow BLE to stabilise before the caller sends commands.
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
+        let status = self.status();
+        if let Err(e) = self.app_handle.emit("ble-status-changed", &status) {
+            error!("Failed to emit ble-status-changed: {e}");
+        }
+
         Ok(())
     }
 
@@ -350,6 +356,15 @@ impl BleManager {
             *is_recording.lock().unwrap() = false;
             *device_button_active.lock().unwrap() = false;
             info!("BLE connection lost (notification stream closed)");
+
+            let disconnected_status = BleStatus {
+                connected: false,
+                device_name: None,
+                device_address: None,
+            };
+            if let Err(e) = app_handle.emit("ble-status-changed", &disconnected_status) {
+                error!("Failed to emit ble-status-changed: {e}");
+            }
 
             // Cancel any recording that was in progress so the coordinator
             // doesn't get stuck in Stage::Recording.
@@ -467,6 +482,10 @@ impl BleManager {
         }
         *self.state.lock().unwrap() = ConnectionState::Disconnected;
         info!("BLE disconnected");
+        let status = self.status();
+        if let Err(e) = self.app_handle.emit("ble-status-changed", &status) {
+            error!("Failed to emit ble-status-changed: {e}");
+        }
         Ok(())
     }
 }

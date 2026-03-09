@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { commands, type AudioSource, type BleStatus } from "@/bindings";
 import { SettingContainer } from "../ui/SettingContainer";
 
@@ -41,6 +42,22 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
     useEffect(() => {
       refreshStatus();
     }, [refreshStatus]);
+
+    // Subscribe to real-time BLE status updates from the backend.
+    useEffect(() => {
+      let unlisten: (() => void) | undefined;
+      listen<BleStatus>("ble-status-changed", (event) => {
+        setBleStatus(event.payload);
+        if (event.payload.connected) {
+          setAudioSource("ble");
+        }
+      }).then((fn) => {
+        unlisten = fn;
+      });
+      return () => {
+        unlisten?.();
+      };
+    }, []);
 
     const handleSourceChange = async (source: AudioSource) => {
       const result = await commands.setAudioSource(source);

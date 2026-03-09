@@ -231,7 +231,14 @@ pub async fn ble_connect_first(app: AppHandle, scan_secs: u64) -> Result<BleStat
     // Without this, model loading starts on first button press and can starve the
     // BLE event loop (causing disconnection).
     app.state::<Arc<TranscriptionManager>>().initiate_model_load();
-    Ok(ble.status())
+    let status = ble.status();
+    // Persist the device address so auto-connect works on next launch.
+    if let Some(ref addr) = status.device_address {
+        let mut settings = get_settings(&app);
+        settings.ble_device_address = Some(addr.clone());
+        write_settings(&app, settings);
+    }
+    Ok(status)
 }
 
 /// Connect to a specific BLE device by address.
@@ -247,6 +254,10 @@ pub async fn ble_connect_by_address(
         .map_err(|e| e.to_string())?;
     // Pre-load transcription model so it's ready before the user presses the button.
     app.state::<Arc<TranscriptionManager>>().initiate_model_load();
+    // Persist the device address so auto-connect works on next launch.
+    let mut settings = get_settings(&app);
+    settings.ble_device_address = Some(address);
+    write_settings(&app, settings);
     Ok(ble.status())
 }
 
