@@ -39,8 +39,10 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     accessibility: "checking",
     microphone: "checking",
   });
+  const [showRetryHelp, setShowRetryHelp] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryHelpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorCountRef = useRef<number>(0);
   const MAX_POLLING_ERRORS = 3;
 
@@ -175,6 +177,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
+      if (retryHelpTimerRef.current) {
+        clearTimeout(retryHelpTimerRef.current);
+      }
     };
   }, []);
 
@@ -183,6 +188,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       await requestAccessibilityPermission();
       setPermissions((prev) => ({ ...prev, accessibility: "waiting" }));
       startPolling();
+      retryHelpTimerRef.current = setTimeout(() => setShowRetryHelp(true), 8000);
     } catch (error) {
       console.error("Failed to request accessibility permission:", error);
       toast.error(t("onboarding.permissions.errors.requestFailed"));
@@ -298,9 +304,37 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                   {t("onboarding.permissions.granted")}
                 </div>
               ) : permissions.accessibility === "waiting" ? (
-                <div className="flex items-center gap-2 text-text/50 text-sm">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {t("onboarding.permissions.waiting")}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2 text-text/50 text-sm">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {t("onboarding.permissions.waiting")}
+                  </div>
+                  {showRetryHelp && (
+                    <div className="flex flex-col gap-1 mt-1">
+                      <p className="text-xs text-text/40">
+                        {t(
+                          "onboarding.permissions.accessibility.retryHint",
+                        )}
+                      </p>
+                      <button
+                        onClick={async () => {
+                          setShowRetryHelp(false);
+                          if (retryHelpTimerRef.current)
+                            clearTimeout(retryHelpTimerRef.current);
+                          retryHelpTimerRef.current = setTimeout(
+                            () => setShowRetryHelp(true),
+                            8000,
+                          );
+                          await requestAccessibilityPermission();
+                        }}
+                        className="text-xs text-logo-primary hover:underline text-left"
+                      >
+                        {t(
+                          "onboarding.permissions.accessibility.openSettingsAgain",
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button

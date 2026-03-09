@@ -94,7 +94,9 @@
       },
       "accessibility": {
         "title": "Accessibility Access",
-        "description": "Required to type transcribed text into your applications."
+        "description": "Required to type transcribed text into your applications.",
+        "retryHint": "Still waiting? After a Handy update, the old permission entry may conflict. Remove Handy from the Accessibility list in System Settings, then open it again below.",
+        "openSettingsAgain": "Open System Settings Again"
       },
       "grant": "Grant Permission",
       "granted": "Granted",
@@ -556,7 +558,8 @@
     "permissionsRequired": "Accessibility Permissions Required",
     "permissionsDescription": "Handy needs accessibility permissions to type transcribed text.",
     "openSettings": "Open System Settings",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "retryHint": "Still waiting? Remove Handy from the Accessibility list in System Settings, then click Open System Settings again."
   },
   "errors": {
     "loadDirectory": "Error loading directory: {{error}}"

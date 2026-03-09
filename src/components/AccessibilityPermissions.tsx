@@ -49,6 +49,19 @@ const AccessibilityPermissions: React.FC = () => {
     }
   };
 
+  // Auto-poll while in "verify" state so the UI updates without a button click
+  useEffect(() => {
+    if (permissionState !== "verify") return;
+    const interval = setInterval(async () => {
+      const granted = await checkAccessibilityPermission();
+      if (granted) {
+        setHasAccessibility(true);
+        setPermissionState("granted");
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [permissionState]);
+
   // On app boot - check permissions (only on macOS)
   useEffect(() => {
     if (!isMacOS) return;
@@ -92,12 +105,19 @@ const AccessibilityPermissions: React.FC = () => {
             {t("accessibility.permissionsDescription")}
           </p>
         </div>
-        <button
-          onClick={handleButtonClick}
-          className={`min-h-10 ${config.className}`}
-        >
-          {config.text}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={handleButtonClick}
+            className={`min-h-10 ${config.className}`}
+          >
+            {config.text}
+          </button>
+          {permissionState === "verify" && (
+            <p className="text-xs text-text/50 text-right">
+              {t("accessibility.retryHint")}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
