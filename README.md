@@ -93,17 +93,29 @@ bun run tauri build
 
 #### Install the Built Application
 
+**Option 1: Use the install script (Recommended)**
+```bash
+# One-liner: build + install to /Applications
+./scripts/install-macos.sh
+```
+
+This script:
+- Builds Handy for production
+- Copies the app to `/Applications`
+- Preserves your models and settings (stored separately)
+
+**Option 2: Manual copy**
+
 After building, the app bundle is located at:
 ```
 src-tauri/target/release/bundle/macos/Handy.app
 ```
 
-**Option 1: Copy to Applications folder**
 ```bash
 cp -r src-tauri/target/release/bundle/macos/Handy.app /Applications/
 ```
 
-**Option 2: Create DMG installer**
+**Option 3: Create DMG installer**
 
 The build process also generates a DMG file at:
 ```
@@ -112,17 +124,84 @@ src-tauri/target/release/bundle/dmg/Handy_*.dmg
 
 Double-click the DMG file and drag Handy.app to your Applications folder.
 
-#### Uninstall Previous Version (Optional)
+---
 
-If you have an existing Handy installation:
+### Updating Handy (Preserving Your Models and Settings)
 
+**Important:** Your downloaded models and settings are stored separately from the application bundle. They are **automatically preserved** when you update.
+
+#### Recommended: Use the Built-in Updater
+
+Handy includes an automatic updater that preserves all your data:
+
+1. Open Handy Settings
+2. Scroll to the **About** section
+3. Click **Check for Updates**
+4. If an update is available, click **Download and Install**
+5. The app will restart automatically with the new version
+
+Your models, settings, and history remain unchanged.
+
+#### Manual Update (Building from Source)
+
+When updating a manually built version:
+
+**macOS:**
 ```bash
-# Remove the old application
-sudo rm -rf /Applications/Handy.app
-
-# Optional: Remove settings and data (use with caution)
-rm -rf ~/Library/Application\ Support/com.pais.handy/
+# Just copy the new app bundle - your data is stored elsewhere
+cp -r src-tauri/target/release/bundle/macos/Handy.app /Applications/
 ```
+
+**Windows (Portable Mode):**
+```bash
+# If using portable mode, just replace the executable
+# Your data is in the Data/ folder next to the exe
+copy src-tauri\target\release\Handy.exe C:\Path\To\Handy\Handy.exe
+```
+
+**Windows (Installed):**
+Use the generated installer:
+- `src-tauri\target\release\bundle\msi\Handy_*.msi`
+- Or `src-tauri\target\release\bundle\nsis\Handy_*.exe`
+
+**Linux:**
+Use the generated package for your distribution:
+```bash
+# Debian/Ubuntu
+sudo apt install ./src-tauri/target/release/bundle/deb/Handy_*.deb
+
+# Fedora/RHEL
+sudo dnf install ./src-tauri/target/release/bundle/rpm/Handy_*.rpm
+```
+
+#### Where Your Data is Stored
+
+Your models and settings are stored in the **App Data Directory**, separate from the application:
+
+| Platform | Path |
+|----------|------|
+| **macOS** | `~/Library/Application Support/com.pais.handy/` |
+| **Windows** | `%APPDATA%\com.pais.handy\` |
+| **Linux** | `~/.config/com.pais.handy/` |
+| **Portable Mode** | `Data/` folder next to the executable |
+
+**To completely reset Handy** (including all models and settings), delete this directory.
+
+---
+
+#### Uninstall Handy
+
+To completely remove Handy and all its data:
+
+1. **Remove the application:**
+   - **macOS**: `sudo rm -rf /Applications/Handy.app`
+   - **Windows**: Use "Add or Remove Programs" or the uninstaller
+   - **Linux**: `sudo apt remove handy` or `sudo dnf remove handy`
+
+2. **Remove settings and data (optional):**
+   - **macOS**: `rm -rf ~/Library/Application\ Support/com.pais.handy/`
+   - **Windows**: Delete `%APPDATA%\com.pais.handy\`
+   - **Linux**: `rm -rf ~/.config/com.pais.handy/`
 
 #### Development Mode
 
