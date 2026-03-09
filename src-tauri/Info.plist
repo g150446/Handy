@@ -6,5 +6,9 @@
   <string>Request microphone access to transcribe audio locally</string>
   <key>NSAccessibilityUsageDescription</key>
   <string>Handy needs accessibility permission to type transcribed text into your applications</string>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Handy uses Bluetooth to receive audio from BLE microphone devices</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>Handy uses Bluetooth to receive audio from BLE microphone devices</string>
 </dict>
 </plist>

@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{list_input_devices, vad::SmoothedVad, AudioRecorder, SileroVad};
+use crate::ble::BleManager;
 use crate::helpers::clamshell;
-use crate::settings::{get_settings, AppSettings};
+use crate::settings::{get_settings, AppSettings, AudioSource};
 use crate::utils;
 use log::{debug, error, info};
 use std::sync::{Arc, Mutex};
@@ -149,12 +150,14 @@ pub struct AudioRecordingManager {
     is_open: Arc<Mutex<bool>>,
     is_recording: Arc<Mutex<bool>>,
     did_mute: Arc<Mutex<bool>>,
+
+    ble_manager: Arc<BleManager>,
 }
 
 impl AudioRecordingManager {
     /* ---------- construction ------------------------------------------------ */
 
-    pub fn new(app: &tauri::AppHandle) -> Result<Self, anyhow::Error> {
+    pub fn new(app: &tauri::AppHandle, ble_manager: Arc<BleManager>) -> Result<Self, anyhow::Error> {
         let settings = get_settings(app);
         let mode = if settings.always_on_microphone {
             MicrophoneMode::AlwaysOn
@@ -171,10 +174,15 @@ impl AudioRecordingManager {
             is_open: Arc::new(Mutex::new(false)),
             is_recording: Arc::new(Mutex::new(false)),
             did_mute: Arc::new(Mutex::new(false)),
+
+            ble_manager,
         };
 
-        // Always-on?  Open immediately.
-        if matches!(mode, MicrophoneMode::AlwaysOn) {
+        // Always-on?  Open immediately (microphone source only).
+        let settings = get_settings(app);
+        if matches!(mode, MicrophoneMode::AlwaysOn)
+            && settings.audio_source == AudioSource::Microphone
+        {
             manager.start_microphone_stream()?;
         }
 
@@ -336,7 +344,25 @@ impl AudioRecordingManager {
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {
-            // Ensure microphone is open in on-demand mode
+            let settings = get_settings(&self.app_handle);
+
+            if settings.audio_source == AudioSource::Ble {
+                // BLE path: fire-and-forget the start command.
+                let ble = self.ble_manager.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = ble.start_recording_command().await {
+                        error!("BLE start recording command failed: {e}");
+                    }
+                });
+                *self.is_recording.lock().unwrap() = true;
+                *state = RecordingState::Recording {
+                    binding_id: binding_id.to_string(),
+                };
+                info!("BLE recording started for binding {binding_id}");
+                return true;
+            }
+
+            // Microphone path: ensure stream is open in on-demand mode.
             if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
                 if let Err(e) = self.start_microphone_stream() {
                     error!("Failed to open microphone stream: {e}");
@@ -380,29 +406,60 @@ impl AudioRecordingManager {
                 *state = RecordingState::Idle;
                 drop(state);
 
-                let samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                    match rec.stop() {
-                        Ok(buf) => buf,
-                        Err(e) => {
-                            error!("stop() failed: {e}");
-                            Vec::new()
-                        }
+                let settings = get_settings(&self.app_handle);
+
+                let audio_source = settings.audio_source;
+                info!("stop_recording: audio_source={:?}", audio_source);
+                let samples = if audio_source == AudioSource::Ble {
+                    // Device-button path: samples are already in memory → collect synchronously.
+                    // This avoids blocking a tokio worker thread with recv_timeout().
+                    if let Some(s) = self.ble_manager.take_device_button_samples() {
+                        s
+                    } else {
+                        // App-initiated BLE stop: send 0x00 via async and wait.
+                        let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
+                        let ble = self.ble_manager.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let samples = match ble.stop_recording_command().await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    error!("BLE stop recording failed: {e}");
+                                    Vec::new()
+                                }
+                            };
+                            info!("BLE stop_recording_command returned {} samples", samples.len());
+                            tx.send(samples).ok();
+                        });
+                        rx.recv_timeout(std::time::Duration::from_secs(5))
+                            .unwrap_or_default()
                     }
                 } else {
-                    error!("Recorder not available");
-                    Vec::new()
+                    // Microphone path.
+                    if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                        match rec.stop() {
+                            Ok(buf) => buf,
+                            Err(e) => {
+                                error!("stop() failed: {e}");
+                                Vec::new()
+                            }
+                        }
+                    } else {
+                        error!("Recorder not available");
+                        Vec::new()
+                    }
                 };
 
                 *self.is_recording.lock().unwrap() = false;
 
-                // In on-demand mode turn the mic off again
-                if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+                // In on-demand mode turn the mic off again (microphone path only).
+                if settings.audio_source == AudioSource::Microphone
+                    && matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand)
+                {
                     self.stop_microphone_stream();
                 }
 
                 // Pad if very short
                 let s_len = samples.len();
-                // debug!("Got {} samples", s_len);
                 if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
                     let mut padded = samples;
                     padded.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
@@ -429,16 +486,25 @@ impl AudioRecordingManager {
             *state = RecordingState::Idle;
             drop(state);
 
-            if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                let _ = rec.stop(); // Discard the result
+            let settings = get_settings(&self.app_handle);
+
+            if settings.audio_source == AudioSource::Ble {
+                // Send stop command (fire-and-forget; discard samples).
+                let ble = self.ble_manager.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = ble.stop_recording_command().await;
+                });
+            } else {
+                if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                    let _ = rec.stop(); // Discard the result
+                }
+                // In on-demand mode turn the mic off again
+                if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+                    self.stop_microphone_stream();
+                }
             }
 
             *self.is_recording.lock().unwrap() = false;
-
-            // In on-demand mode turn the mic off again
-            if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
-                self.stop_microphone_stream();
-            }
         }
     }
 }

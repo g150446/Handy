@@ -3,6 +3,7 @@ mod actions;
 mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
+pub mod ble;
 pub mod cli;
 mod clipboard;
 mod commands;
@@ -111,9 +112,14 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // after onboarding completes. This avoids triggering permission dialogs
     // on macOS before the user is ready.
 
+    // Initialize the BLE manager (shared between recording manager and commands).
+    let ble_manager = Arc::new(crate::ble::BleManager::new(app_handle.clone()));
+    app_handle.manage(ble_manager.clone());
+
     // Initialize the managers
     let recording_manager = Arc::new(
-        AudioRecordingManager::new(app_handle).expect("Failed to initialize recording manager"),
+        AudioRecordingManager::new(app_handle, ble_manager)
+            .expect("Failed to initialize recording manager"),
     );
     let model_manager =
         Arc::new(ModelManager::new(app_handle).expect("Failed to initialize model manager"));
@@ -341,6 +347,13 @@ pub fn run(cli_args: CliArgs) {
         commands::audio::set_clamshell_microphone,
         commands::audio::get_clamshell_microphone,
         commands::audio::is_recording,
+        commands::audio::ble_get_status,
+        commands::audio::ble_scan_devices,
+        commands::audio::ble_connect_first,
+        commands::audio::ble_connect_by_address,
+        commands::audio::ble_disconnect,
+        commands::audio::set_audio_source,
+        commands::audio::get_audio_source,
         commands::transcription::set_model_unload_timeout,
         commands::transcription::get_model_load_status,
         commands::transcription::unload_model_manually,

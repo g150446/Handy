@@ -203,6 +203,24 @@
       "volume": {
         "title": "볼륨",
         "description": "오디오 피드백 사운드의 볼륨 조절"
+      },
+      "ble": {
+        "title": "BLE Microphone",
+        "description": "Use a Bluetooth Low Energy device (AtomEchoS3R) as microphone",
+        "source": {
+          "label": "Audio Source",
+          "microphone": "System Microphone",
+          "ble": "BLE Device"
+        },
+        "scan": "Scan",
+        "scanning": "Scanning...",
+        "connect": "Connect",
+        "connecting": "Connecting...",
+        "disconnect": "Disconnect",
+        "connected": "Connected",
+        "disconnected": "Not connected",
+        "noDevices": "No devices found",
+        "selectDevice": "Select device..."
       }
     },
     "models": {

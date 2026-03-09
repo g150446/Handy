@@ -1,7 +1,9 @@
 use crate::audio_feedback;
 use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
+use crate::ble::{BleManager, BleStatus};
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
-use crate::settings::{get_settings, write_settings};
+use crate::managers::transcription::TranscriptionManager;
+use crate::settings::{get_settings, write_settings, AudioSource};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -195,4 +197,84 @@ pub fn get_clamshell_microphone(app: AppHandle) -> Result<String, String> {
 pub fn is_recording(app: AppHandle) -> bool {
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     audio_manager.is_recording()
+}
+
+// ──────────────────────────────────────────────────────── BLE commands ──
+
+/// Return the current BLE connection status.
+#[tauri::command]
+#[specta::specta]
+pub fn ble_get_status(app: AppHandle) -> BleStatus {
+    app.state::<Arc<BleManager>>().status()
+}
+
+/// Scan for nearby AtomEchoS3R devices.
+/// Returns a list of `"name (address)"` display strings.
+#[tauri::command]
+#[specta::specta]
+pub async fn ble_scan_devices(app: AppHandle, duration_secs: u64) -> Result<Vec<String>, String> {
+    app.state::<Arc<BleManager>>()
+        .scan_devices(duration_secs)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Connect to the first AtomEchoS3R found within `scan_secs` seconds.
+#[tauri::command]
+#[specta::specta]
+pub async fn ble_connect_first(app: AppHandle, scan_secs: u64) -> Result<BleStatus, String> {
+    let ble = app.state::<Arc<BleManager>>();
+    ble.connect_first(scan_secs)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Pre-load transcription model so it's ready before the user presses the button.
+    // Without this, model loading starts on first button press and can starve the
+    // BLE event loop (causing disconnection).
+    app.state::<Arc<TranscriptionManager>>().initiate_model_load();
+    Ok(ble.status())
+}
+
+/// Connect to a specific BLE device by address.
+#[tauri::command]
+#[specta::specta]
+pub async fn ble_connect_by_address(
+    app: AppHandle,
+    address: String,
+) -> Result<BleStatus, String> {
+    let ble = app.state::<Arc<BleManager>>();
+    ble.connect_by_address(&address)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Pre-load transcription model so it's ready before the user presses the button.
+    app.state::<Arc<TranscriptionManager>>().initiate_model_load();
+    Ok(ble.status())
+}
+
+/// Disconnect the BLE device.
+#[tauri::command]
+#[specta::specta]
+pub async fn ble_disconnect(app: AppHandle) -> Result<(), String> {
+    app.state::<Arc<BleManager>>()
+        .disconnect()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Set the active audio source (microphone or BLE).
+/// When switching to BLE, the caller should also set `ble_device_address` via
+/// `ble_connect_by_address` or `ble_connect_first`.
+#[tauri::command]
+#[specta::specta]
+pub fn set_audio_source(app: AppHandle, source: AudioSource) -> Result<(), String> {
+    let mut settings = get_settings(&app);
+    settings.audio_source = source;
+    write_settings(&app, settings);
+    Ok(())
+}
+
+/// Get the currently configured audio source.
+#[tauri::command]
+#[specta::specta]
+pub fn get_audio_source(app: AppHandle) -> AudioSource {
+    get_settings(&app).audio_source
 }

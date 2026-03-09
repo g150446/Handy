@@ -221,6 +221,24 @@
       "volume": {
         "title": "Volume",
         "description": "Ajuster le volume du signal sonore"
+      },
+      "ble": {
+        "title": "BLE Microphone",
+        "description": "Use a Bluetooth Low Energy device (AtomEchoS3R) as microphone",
+        "source": {
+          "label": "Audio Source",
+          "microphone": "System Microphone",
+          "ble": "BLE Device"
+        },
+        "scan": "Scan",
+        "scanning": "Scanning...",
+        "connect": "Connect",
+        "connecting": "Connecting...",
+        "disconnect": "Disconnect",
+        "connected": "Connected",
+        "disconnected": "Not connected",
+        "noDevices": "No devices found",
+        "selectDevice": "Select device..."
       }
     },
     "advanced": {

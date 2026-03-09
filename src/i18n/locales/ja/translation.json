@@ -221,6 +221,24 @@
       "volume": {
         "title": "音量",
         "description": "音声フィードバックの音量を調整"
+      },
+      "ble": {
+        "title": "BLE マイク",
+        "description": "Bluetooth Low Energy デバイス (AtomEchoS3R) をマイクとして使用",
+        "source": {
+          "label": "音声ソース",
+          "microphone": "システムマイク",
+          "ble": "BLE デバイス"
+        },
+        "scan": "スキャン",
+        "scanning": "スキャン中...",
+        "connect": "接続",
+        "connecting": "接続中...",
+        "disconnect": "切断",
+        "connected": "接続済み",
+        "disconnected": "未接続",
+        "noDevices": "デバイスが見つかりません",
+        "selectDevice": "デバイスを選択..."
       }
     },
     "advanced": {

@@ -260,6 +260,22 @@ impl SoundTheme {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
+pub enum AudioSource {
+    /// Use the system microphone (default behaviour).
+    Microphone,
+    /// Use a BLE device (AtomEchoS3R).  The address is stored separately in
+    /// `ble_device_address`.
+    Ble,
+}
+
+impl Default for AudioSource {
+    fn default() -> Self {
+        AudioSource::Microphone
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
 pub enum TypingTool {
     Auto,
     Wtype,
@@ -360,6 +376,12 @@ pub struct AppSettings {
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
     pub external_script_path: Option<String>,
+    /// Which audio source to use for recording.
+    #[serde(default)]
+    pub audio_source: AudioSource,
+    /// BLE device address used when `audio_source == AudioSource::Ble`.
+    #[serde(default)]
+    pub ble_device_address: Option<String>,
 }
 
 fn default_model() -> String {
@@ -724,6 +746,8 @@ pub fn get_default_settings() -> AppSettings {
         paste_delay_ms: default_paste_delay_ms(),
         typing_tool: default_typing_tool(),
         external_script_path: None,
+        audio_source: AudioSource::default(),
+        ble_device_address: None,
     }
 }
 
