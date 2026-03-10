@@ -52,6 +52,10 @@
         "name": "Parakeet V3",
         "description": "Fast and accurate"
       },
+      "parakeet-tdt-ctc-0.6b-ja": {
+        "name": "Parakeet Japanese",
+        "description": "Japanese only. Optimized for Japanese speech recognition."
+      },
       "moonshine-base": {
         "name": "Moonshine Base",
         "description": "Very fast, English only. Handles accents well."
@@ -201,7 +205,10 @@
         "translation": "Translation",
         "allLanguages": "All Languages"
       },
-      "noModelsMatch": "No models match this filter."
+      "noModelsMatch": "No models match this filter.",
+      "importOnnx": "Import ONNX Model",
+      "importOnnxPickTitle": "Select encoder-model.onnx inside your model directory",
+      "importOnnxError": "Failed to import model: {{error}}"
     },
     "sound": {
       "title": "Sound",

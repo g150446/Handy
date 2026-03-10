@@ -142,3 +142,15 @@ pub async fn cancel_download(
         .cancel_download(&model_id)
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn import_model(
+    model_manager: State<'_, Arc<ModelManager>>,
+    dir_path: String,
+) -> Result<ModelInfo, String> {
+    let path = std::path::PathBuf::from(&dir_path);
+    model_manager
+        .import_onnx_model(&path)
+        .map_err(|e| e.to_string())
+}

@@ -508,6 +508,14 @@ async cancelDownload(modelId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async importModel(dirPath: string) : Promise<Result<ModelInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_model", { dirPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setActiveModel(modelId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_active_model", { modelId }) };

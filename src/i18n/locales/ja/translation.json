@@ -52,6 +52,10 @@
         "name": "Parakeet V3",
         "description": "高速で正確"
       },
+      "parakeet-tdt-ctc-0.6b-ja": {
+        "name": "Parakeet 日本語",
+        "description": "日本語専用。日本語音声認識に最適化されたモデル。"
+      },
       "moonshine-base": {
         "name": "Moonshine Base",
         "description": "非常に高速、英語のみ。アクセントにも対応。"
@@ -156,7 +160,10 @@
       },
       "noModelsMatch": "このフィルターに一致するモデルがありません。",
       "yourModels": "ダウンロード済みモデル",
-      "availableModels": "ダウンロード可能"
+      "availableModels": "ダウンロード可能",
+      "importOnnx": "ONNXモデルをインポート",
+      "importOnnxPickTitle": "モデルディレクトリ内の encoder-model.onnx を選択してください",
+      "importOnnxError": "モデルのインポートに失敗しました: {{error}}"
     },
     "general": {
       "title": "一般",

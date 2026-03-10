@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, Globe } from "lucide-react";
 import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
 import { useModelStore } from "@/stores/modelStore";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
+import { commands } from "@/bindings";
 
 // check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
@@ -33,6 +34,7 @@ export const ModelsSettings: React.FC = () => {
     cancelDownload,
     selectModel,
     deleteModel,
+    loadModels,
   } = useModelStore();
 
   // click outside handler for language dropdown
@@ -149,6 +151,26 @@ export const ModelsSettings: React.FC = () => {
     }
   };
 
+  const handleImportModel = async () => {
+    const file = await open({
+      multiple: false,
+      title: t("settings.models.importOnnxPickTitle"),
+      filters: [{ name: "ONNX encoder", extensions: ["onnx"] }],
+    });
+    if (!file) return;
+    // Derive the model directory from the selected file
+    const filePath = file as string;
+    const sep = filePath.includes("/") ? "/" : "\\";
+    const dir = filePath.substring(0, filePath.lastIndexOf(sep));
+    const result = await commands.importModel(dir);
+    if (result.status === "error") {
+      console.error(t("settings.models.importOnnxError", { error: result.error }));
+      alert(t("settings.models.importOnnxError", { error: result.error }));
+      return;
+    }
+    await loadModels();
+  };
+
   // Filter models based on language filter
   const filteredModels = useMemo(() => {
     return models.filter((model: ModelInfo) => {
@@ -219,8 +241,17 @@ export const ModelsSettings: React.FC = () => {
               <h2 className="text-sm font-medium text-text/60">
                 {t("settings.models.yourModels")}
               </h2>
-              {/* Language filter dropdown */}
-              <div className="relative" ref={languageDropdownRef}>
+              <div className="flex items-center gap-2">
+                {/* Import ONNX Model button */}
+                <button
+                  type="button"
+                  onClick={handleImportModel}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20 transition-colors"
+                >
+                  {t("settings.models.importOnnx")}
+                </button>
+                {/* Language filter dropdown */}
+                <div className="relative" ref={languageDropdownRef}>
                 <button
                   type="button"
                   onClick={() => setLanguageDropdownOpen(!languageDropdownOpen)}
@@ -310,6 +341,7 @@ export const ModelsSettings: React.FC = () => {
                     </div>
                   </div>
                 )}
+                </div>
               </div>
             </div>
             {downloadedModels.map((model: ModelInfo) => (

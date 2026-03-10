@@ -268,6 +268,32 @@ impl ModelManager {
         );
 
         available_models.insert(
+            "parakeet-tdt-ctc-0.6b-ja".to_string(),
+            ModelInfo {
+                id: "parakeet-tdt-ctc-0.6b-ja".to_string(),
+                name: "Parakeet Japanese".to_string(),
+                description: "Japanese only. Optimized for Japanese speech recognition."
+                    .to_string(),
+                filename: "parakeet-tdt-ctc-0.6b-ja-int8".to_string(),
+                url: Some(
+                    "https://blob.handy.computer/parakeet-ja-int8.tar.gz".to_string(),
+                ),
+                size_mb: 480,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::Parakeet,
+                accuracy_score: 0.85,
+                speed_score: 0.85,
+                supports_translation: false,
+                is_recommended: false,
+                supported_languages: vec!["ja".to_string()],
+                is_custom: false,
+            },
+        );
+
+        available_models.insert(
             "moonshine-base".to_string(),
             ModelInfo {
                 id: "moonshine-base".to_string(),
@@ -425,6 +451,13 @@ impl ModelManager {
         // Auto-discover custom Whisper models (.bin files) in the models directory
         if let Err(e) = Self::discover_custom_whisper_models(&models_dir, &mut available_models) {
             warn!("Failed to discover custom models: {}", e);
+        }
+
+        // Auto-discover custom imported Parakeet ONNX directories
+        if let Err(e) =
+            Self::discover_custom_parakeet_models(&models_dir, &mut available_models)
+        {
+            warn!("Failed to discover custom Parakeet models: {}", e);
         }
 
         let manager = Self {
@@ -1191,6 +1224,176 @@ impl ModelManager {
         let _ = self.app_handle.emit("model-download-cancelled", model_id);
 
         info!("Download cancellation initiated for: {}", model_id);
+        Ok(())
+    }
+
+    pub fn import_onnx_model(&self, src_dir: &Path) -> Result<ModelInfo> {
+        // Validate Parakeet structure
+        let has_encoder = src_dir.join("encoder-model.onnx").exists()
+            || src_dir.join("encoder-model.int8.onnx").exists();
+        let has_vocab = src_dir.join("vocab.txt").exists();
+        if !has_encoder || !has_vocab {
+            return Err(anyhow::anyhow!(
+                "Not a valid Parakeet ONNX directory. Must contain encoder-model.onnx and vocab.txt"
+            ));
+        }
+
+        let dirname = src_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Invalid directory name"))?
+            .to_string();
+
+        // Check for duplicates
+        {
+            let models = self.available_models.lock().unwrap();
+            if models.contains_key(&dirname) {
+                return Err(anyhow::anyhow!("A model named '{}' already exists", dirname));
+            }
+        }
+
+        // Copy to models directory
+        let dest = self.models_dir.join(&dirname);
+        Self::copy_dir_all(src_dir, &dest)?;
+
+        // Build display name
+        let display_name = dirname
+            .replace(['-', '_'], " ")
+            .split_whitespace()
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let model_info = ModelInfo {
+            id: dirname.clone(),
+            name: display_name,
+            description: "Not officially supported".to_string(),
+            filename: dirname.clone(),
+            url: None,
+            size_mb: 0,
+            is_downloaded: true,
+            is_downloading: false,
+            partial_size: 0,
+            is_directory: true,
+            engine_type: EngineType::Parakeet,
+            accuracy_score: 0.0,
+            speed_score: 0.0,
+            supports_translation: false,
+            is_recommended: false,
+            supported_languages: vec![],
+            is_custom: true,
+        };
+
+        self.available_models
+            .lock()
+            .unwrap()
+            .insert(dirname, model_info.clone());
+
+        Ok(model_info)
+    }
+
+    /// Discover custom imported Parakeet ONNX model directories.
+    /// A directory qualifies if it contains `encoder-model.onnx` (or the int8
+    /// variant) and `vocab.txt`, and its name is not already registered.
+    fn discover_custom_parakeet_models(
+        models_dir: &Path,
+        available_models: &mut HashMap<String, ModelInfo>,
+    ) -> Result<()> {
+        if !models_dir.exists() {
+            return Ok(());
+        }
+
+        for entry in fs::read_dir(models_dir)? {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!("Failed to read directory entry: {}", e);
+                    continue;
+                }
+            };
+
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let dirname = match path.file_name().and_then(|s| s.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+
+            // Skip already-registered models (predefined or previously discovered)
+            if available_models.contains_key(&dirname) {
+                continue;
+            }
+
+            // Must look like a Parakeet directory
+            let has_encoder = path.join("encoder-model.onnx").exists()
+                || path.join("encoder-model.int8.onnx").exists();
+            let has_vocab = path.join("vocab.txt").exists();
+            if !has_encoder || !has_vocab {
+                continue;
+            }
+
+            let display_name = dirname
+                .replace(['-', '_'], " ")
+                .split_whitespace()
+                .map(|w| {
+                    let mut c = w.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            info!("Discovered custom Parakeet model: {}", dirname);
+
+            available_models.insert(
+                dirname.clone(),
+                ModelInfo {
+                    id: dirname.clone(),
+                    name: display_name,
+                    description: "Not officially supported".to_string(),
+                    filename: dirname.clone(),
+                    url: None,
+                    size_mb: 0,
+                    is_downloaded: true,
+                    is_downloading: false,
+                    partial_size: 0,
+                    is_directory: true,
+                    engine_type: EngineType::Parakeet,
+                    accuracy_score: 0.0,
+                    speed_score: 0.0,
+                    supports_translation: false,
+                    is_recommended: false,
+                    supported_languages: vec![],
+                    is_custom: true,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let ty = entry.file_type()?;
+            if ty.is_dir() {
+                Self::copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
+            } else {
+                fs::copy(entry.path(), dst.join(entry.file_name()))?;
+            }
+        }
         Ok(())
     }
 }
