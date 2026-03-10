@@ -327,6 +327,17 @@ pub fn show_processing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "processing");
 }
 
+/// Shows a short overlay when returning to normal input mode.
+pub fn show_normal_input_overlay(app_handle: &AppHandle) {
+    show_overlay_state(app_handle, "normal_input");
+
+    let app_handle = app_handle.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        hide_recording_overlay(&app_handle);
+    });
+}
+
 /// Updates the overlay window position based on current settings
 pub fn update_overlay_position(app_handle: &AppHandle) {
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {

@@ -275,9 +275,7 @@ impl ModelManager {
                 description: "Japanese only. Optimized for Japanese speech recognition."
                     .to_string(),
                 filename: "parakeet-tdt-ctc-0.6b-ja-int8".to_string(),
-                url: Some(
-                    "https://blob.handy.computer/parakeet-ja-int8.tar.gz".to_string(),
-                ),
+                url: Some("https://blob.handy.computer/parakeet-ja-int8.tar.gz".to_string()),
                 size_mb: 480,
                 is_downloaded: false,
                 is_downloading: false,
@@ -454,9 +452,7 @@ impl ModelManager {
         }
 
         // Auto-discover custom imported Parakeet ONNX directories
-        if let Err(e) =
-            Self::discover_custom_parakeet_models(&models_dir, &mut available_models)
-        {
+        if let Err(e) = Self::discover_custom_parakeet_models(&models_dir, &mut available_models) {
             warn!("Failed to discover custom Parakeet models: {}", e);
         }
 
@@ -1248,7 +1244,10 @@ impl ModelManager {
         {
             let models = self.available_models.lock().unwrap();
             if models.contains_key(&dirname) {
-                return Err(anyhow::anyhow!("A model named '{}' already exists", dirname));
+                return Err(anyhow::anyhow!(
+                    "A model named '{}' already exists",
+                    dirname
+                ));
             }
         }
 

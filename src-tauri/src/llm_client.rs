@@ -116,17 +116,8 @@ pub async fn send_chat_completion_with_schema(
     system_prompt: Option<String>,
     json_schema: Option<Value>,
 ) -> Result<Option<String>, String> {
-    let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
-
-    debug!("Sending chat completion request to: {}", url);
-
-    let client = create_client(provider, &api_key)?;
-
-    // Build messages vector
     let mut messages = Vec::new();
 
-    // Add system prompt if provided
     if let Some(system) = system_prompt {
         messages.push(ChatMessage {
             role: "system".to_string(),
@@ -134,11 +125,41 @@ pub async fn send_chat_completion_with_schema(
         });
     }
 
-    // Add user message
     messages.push(ChatMessage {
         role: "user".to_string(),
         content: user_content,
     });
+
+    send_chat_messages_internal(provider, api_key, model, messages, json_schema).await
+}
+
+pub async fn send_chat_messages(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<(String, String)>,
+) -> Result<Option<String>, String> {
+    let chat_messages = messages
+        .into_iter()
+        .map(|(role, content)| ChatMessage { role, content })
+        .collect();
+
+    send_chat_messages_internal(provider, api_key, model, chat_messages, None).await
+}
+
+async fn send_chat_messages_internal(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<ChatMessage>,
+    json_schema: Option<Value>,
+) -> Result<Option<String>, String> {
+    let base_url = provider.base_url.trim_end_matches('/');
+    let url = format!("{}/chat/completions", base_url);
+
+    debug!("Sending chat completion request to: {}", url);
+
+    let client = create_client(provider, &api_key)?;
 
     // Build response_format if schema is provided
     let response_format = json_schema.map(|schema| ResponseFormat {

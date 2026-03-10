@@ -4,7 +4,9 @@ use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, S
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, resolve_post_process_api_key, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils::{
@@ -112,11 +114,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         provider.id, model
     );
 
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
+    let api_key = resolve_post_process_api_key(settings, &provider.id).value;
 
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
@@ -467,6 +465,33 @@ impl ShortcutAction for TranscribeAction {
                             } else if final_text != transcription {
                                 // Chinese conversion was applied but no LLM post-processing
                                 post_processed_text = Some(final_text.clone());
+                            }
+
+                            let conversation_mode_active =
+                                crate::conversation::get_mode_snapshot(&ah).active;
+                            info!(
+                                "Transcription routing decision: conversation_mode_active={}",
+                                conversation_mode_active
+                            );
+                            if conversation_mode_active {
+                                show_processing_overlay(&ah);
+                                match crate::conversation::submit_voice_prompt(&ah, final_text)
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        utils::hide_recording_overlay(&ah);
+                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                    }
+                                    Err(err) => {
+                                        error!(
+                                            "Failed to submit conversation voice prompt: {}",
+                                            err
+                                        );
+                                        utils::hide_recording_overlay(&ah);
+                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                    }
+                                }
+                                return;
                             }
 
                             // Save to history with post-processed text and prompt

@@ -3,11 +3,29 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
 use std::collections::HashMap;
+use std::process::Command;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
+pub const OPENROUTER_PROVIDER_ID: &str = "openrouter";
+pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "z-ai/glm-4.7-flash";
+pub const OPENROUTER_API_KEY_ENV_VAR: &str = "OPENROUTER_API_KEY";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiKeySource {
+    Missing,
+    Settings,
+    Environment,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedApiKey {
+    pub value: String,
+    pub source: ApiKeySource,
+}
 
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
@@ -566,7 +584,67 @@ fn default_model_for_provider(provider_id: &str) -> String {
     if provider_id == APPLE_INTELLIGENCE_PROVIDER_ID {
         return APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string();
     }
+    if provider_id == OPENROUTER_PROVIDER_ID {
+        return OPENROUTER_DEFAULT_MODEL_ID.to_string();
+    }
     String::new()
+}
+
+fn read_openrouter_api_key_from_environment() -> Option<String> {
+    if let Ok(value) = std::env::var(OPENROUTER_API_KEY_ENV_VAR) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("launchctl")
+            .args(["getenv", OPENROUTER_API_KEY_ENV_VAR])
+            .output()
+        {
+            if output.status.success() {
+                if let Ok(value) = String::from_utf8(output.stdout) {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+pub fn resolve_post_process_api_key(settings: &AppSettings, provider_id: &str) -> ResolvedApiKey {
+    if provider_id == OPENROUTER_PROVIDER_ID {
+        if let Some(value) = read_openrouter_api_key_from_environment() {
+            return ResolvedApiKey {
+                value,
+                source: ApiKeySource::Environment,
+            };
+        }
+    }
+
+    let value = settings
+        .post_process_api_keys
+        .get(provider_id)
+        .cloned()
+        .unwrap_or_default();
+
+    if value.trim().is_empty() {
+        ResolvedApiKey {
+            value,
+            source: ApiKeySource::Missing,
+        }
+    } else {
+        ResolvedApiKey {
+            value,
+            source: ApiKeySource::Settings,
+        }
+    }
 }
 
 fn default_post_process_models() -> HashMap<String, String> {

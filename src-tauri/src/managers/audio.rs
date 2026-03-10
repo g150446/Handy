@@ -157,7 +157,10 @@ pub struct AudioRecordingManager {
 impl AudioRecordingManager {
     /* ---------- construction ------------------------------------------------ */
 
-    pub fn new(app: &tauri::AppHandle, ble_manager: Arc<BleManager>) -> Result<Self, anyhow::Error> {
+    pub fn new(
+        app: &tauri::AppHandle,
+        ble_manager: Arc<BleManager>,
+    ) -> Result<Self, anyhow::Error> {
         let settings = get_settings(app);
         let mode = if settings.always_on_microphone {
             MicrophoneMode::AlwaysOn
@@ -427,7 +430,10 @@ impl AudioRecordingManager {
                                     Vec::new()
                                 }
                             };
-                            info!("BLE stop_recording_command returned {} samples", samples.len());
+                            info!(
+                                "BLE stop_recording_command returned {} samples",
+                                samples.len()
+                            );
                             tx.send(samples).ok();
                         });
                         rx.recv_timeout(std::time::Duration::from_secs(5))

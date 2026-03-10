@@ -7,6 +7,7 @@ pub mod ble;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod conversation;
 mod helpers;
 mod input;
 mod llm_client;
@@ -115,6 +116,24 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Initialize the BLE manager (shared between recording manager and commands).
     let ble_manager = Arc::new(crate::ble::BleManager::new(app_handle.clone()));
     app_handle.manage(ble_manager.clone());
+    conversation::initialize(app_handle);
+
+    {
+        let ble_manager = ble_manager.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut last_tick = std::time::SystemTime::now();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let now = std::time::SystemTime::now();
+                let gap = now.duration_since(last_tick).unwrap_or_default();
+                last_tick = now;
+
+                if gap > std::time::Duration::from_secs(15) {
+                    ble_manager.handle_possible_system_resume(gap);
+                }
+            }
+        });
+    }
 
     // Initialize the managers
     let recording_manager = Arc::new(
@@ -315,6 +334,7 @@ pub fn run(cli_args: CliArgs) {
         commands::get_app_dir_path,
         commands::get_app_settings,
         commands::get_default_settings,
+        conversation::get_conversation_mode,
         commands::get_log_dir_path,
         commands::set_log_level,
         commands::open_recordings_folder,
@@ -355,6 +375,7 @@ pub fn run(cli_args: CliArgs) {
         commands::audio::ble_disconnect,
         commands::audio::set_audio_source,
         commands::audio::get_audio_source,
+        conversation::send_conversation_message,
         commands::transcription::set_model_unload_timeout,
         commands::transcription::get_model_load_status,
         commands::transcription::unload_model_manually,
@@ -526,6 +547,11 @@ pub fn run(cli_args: CliArgs) {
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
+                if window.label() == conversation::CONVERSATION_WINDOW_LABEL {
+                    let _ = conversation::deactivate_mode(&window.app_handle());
+                    return;
+                }
+
                 let _res = window.hide();
 
                 let settings = get_settings(&window.app_handle());
@@ -559,7 +585,9 @@ pub fn run(cli_args: CliArgs) {
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
-                show_main_window(app);
+                if !conversation::consume_reopen_suppression(app) {
+                    show_main_window(app);
+                }
             }
             let _ = (app, event); // suppress unused warnings on non-macOS
         });

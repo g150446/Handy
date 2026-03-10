@@ -10,7 +10,10 @@
 //! Event packet (3 bytes):
 //!   Byte 0   : 0x00  (reserved)
 //!   Byte 1   : 0x55  (event sync byte)
-//!   Byte 2   : event code  (0x01 = recording started, 0x02 = recording stopped)
+//!   Byte 2   : event code
+//!              0x01 = recording started
+//!              0x02 = recording stopped
+//!              0x03 = toggle conversation mode
 //!
 //! Characteristic UUIDs
 //! ─────────────────────
@@ -32,16 +35,14 @@
 //!                           (push-to-talk release) → triggers transcription pipeline
 
 use anyhow::Result;
-use btleplug::api::{
-    Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType,
-};
-use btleplug::platform::{Manager, Peripheral};
+use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType};
+use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures_util::StreamExt;
 use log::{debug, error, info, warn};
-use tauri::Emitter;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::{Arc, Mutex};
+use tauri::{Emitter, Manager as TauriManager};
 use uuid::{uuid, Uuid};
 
 pub const BLE_DEVICE_NAME: &str = "AtomEchoS3R";
@@ -93,6 +94,13 @@ pub struct BleManager {
     /// True when the device's physical button started the current recording
     /// (as opposed to the app sending 0x01).  Used to skip redundant commands.
     device_button_active: Arc<Mutex<bool>>,
+    /// Set when a double-click cancels an in-progress BLE recording so the
+    /// subsequent device stop event does not trigger transcription.
+    discard_next_stop_event: Arc<Mutex<bool>>,
+    /// Disabled by explicit user disconnect so we do not immediately reconnect
+    /// against the user's intent.
+    allow_auto_reconnect: Arc<Mutex<bool>>,
+    reconnect_task_active: Arc<Mutex<bool>>,
 }
 
 impl BleManager {
@@ -104,6 +112,9 @@ impl BleManager {
             recording_samples: Arc::new(Mutex::new(Vec::new())),
             is_recording: Arc::new(Mutex::new(false)),
             device_button_active: Arc::new(Mutex::new(false)),
+            discard_next_stop_event: Arc::new(Mutex::new(false)),
+            allow_auto_reconnect: Arc::new(Mutex::new(true)),
+            reconnect_task_active: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -128,7 +139,10 @@ impl BleManager {
     }
 
     pub fn is_connected(&self) -> bool {
-        matches!(*self.state.lock().unwrap(), ConnectionState::Connected { .. })
+        matches!(
+            *self.state.lock().unwrap(),
+            ConnectionState::Connected { .. }
+        )
     }
 
     // ──────────────────────────────────────────────────────── scanning ──
@@ -163,6 +177,46 @@ impl BleManager {
         Ok(found)
     }
 
+    async fn find_matching_peripheral(
+        &self,
+        central: &Adapter,
+        timeout: std::time::Duration,
+        preferred_id: Option<&str>,
+    ) -> Result<Option<Peripheral>> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut fallback_match: Option<Peripheral> = None;
+
+        while tokio::time::Instant::now() < deadline {
+            for peripheral in central.peripherals().await? {
+                if let Some(id) = preferred_id {
+                    if peripheral.id().to_string() == id {
+                        return Ok(Some(peripheral));
+                    }
+                }
+
+                if let Ok(Some(props)) = peripheral.properties().await {
+                    if props
+                        .local_name
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains(BLE_DEVICE_NAME)
+                    {
+                        if preferred_id.is_none() {
+                            return Ok(Some(peripheral));
+                        }
+                        if fallback_match.is_none() {
+                            fallback_match = Some(peripheral);
+                        }
+                    }
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        Ok(fallback_match)
+    }
+
     // ────────────────────────────────────────────────────── connection ──
 
     /// Connect to the first AtomEchoS3R found within `scan_secs` seconds.
@@ -177,26 +231,12 @@ impl BleManager {
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
         central.start_scan(ScanFilter::default()).await?;
-        tokio::time::sleep(std::time::Duration::from_secs(scan_secs)).await;
+        let matched =
+            self.find_matching_peripheral(&central, std::time::Duration::from_secs(scan_secs), None)
+                .await?;
         central.stop_scan().await?;
 
-        let mut matched: Option<Peripheral> = None;
-        for p in central.peripherals().await? {
-            if let Ok(Some(props)) = p.properties().await {
-                if props
-                    .local_name
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains(BLE_DEVICE_NAME)
-                {
-                    matched = Some(p);
-                    break;
-                }
-            }
-        }
-
-        let device = matched
-            .ok_or_else(|| anyhow::anyhow!("AtomEchoS3R not found during scan"))?;
+        let device = matched.ok_or_else(|| anyhow::anyhow!("AtomEchoS3R not found during scan"))?;
 
         self.do_connect(device).await
     }
@@ -213,19 +253,35 @@ impl BleManager {
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
         central.start_scan(ScanFilter::default()).await?;
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let matched = self
+            .find_matching_peripheral(
+                &central,
+                std::time::Duration::from_secs(8),
+                Some(address),
+            )
+            .await?;
+
         central.stop_scan().await?;
 
-        let mut matched: Option<Peripheral> = None;
-        for p in central.peripherals().await? {
-            if p.id().to_string() == address {
-                matched = Some(p);
-                break;
+        if matched.is_some() {
+            if matched
+                .as_ref()
+                .is_some_and(|peripheral| peripheral.id().to_string() != address)
+            {
+                warn!(
+                    "BLE device id {} was not found; using name-based fallback peripheral {}",
+                    address,
+                    matched.as_ref().unwrap().id()
+                );
             }
+        } else {
+            warn!(
+                "BLE device id {} was not found; falling back to scan by device name also failed",
+                address
+            );
         }
 
-        let device = matched
-            .ok_or_else(|| anyhow::anyhow!("Device not found: {}", address))?;
+        let device = matched.ok_or_else(|| anyhow::anyhow!("Device not found: {}", address))?;
 
         self.do_connect(device).await
     }
@@ -258,6 +314,11 @@ impl BleManager {
             device_name: device_name.clone(),
             device_address: device_address.clone(),
         };
+        *self.allow_auto_reconnect.lock().unwrap() = true;
+
+        let mut settings = crate::settings::get_settings(&self.app_handle);
+        settings.ble_device_address = Some(device_address.clone());
+        crate::settings::write_settings(&self.app_handle, settings);
 
         info!("BLE connected: {} ({})", device_name, device_address);
 
@@ -275,10 +336,11 @@ impl BleManager {
     }
 
     fn spawn_notification_listener(&self, peripheral: Peripheral) {
+        let ble = self.clone();
         let recording_samples = self.recording_samples.clone();
         let is_recording = self.is_recording.clone();
         let device_button_active = self.device_button_active.clone();
-        let state = self.state.clone();
+        let discard_next_stop_event = self.discard_next_stop_event.clone();
         let app_handle = self.app_handle.clone();
 
         tauri::async_runtime::spawn(async move {
@@ -286,6 +348,7 @@ impl BleManager {
                 Ok(s) => s,
                 Err(e) => {
                     error!("BLE notification stream error: {}", e);
+                    ble.handle_connection_loss("notification stream error", false);
                     return;
                 }
             };
@@ -330,16 +393,46 @@ impl BleManager {
                                 *recording_samples.lock().unwrap() = Vec::new();
                                 *is_recording.lock().unwrap() = true;
                                 *device_button_active.lock().unwrap() = true;
+                                *discard_next_stop_event.lock().unwrap() = false;
 
                                 // Trigger the transcription pipeline (push-to-talk press).
                                 send_ble_button_event(&app_handle, true);
                             }
                             0x02 => {
+                                if *discard_next_stop_event.lock().unwrap() {
+                                    info!("BLE event: ignoring stop after double-click cancel");
+                                    *discard_next_stop_event.lock().unwrap() = false;
+                                    continue;
+                                }
                                 info!("BLE event: device button released – stop recording");
                                 // Trigger the transcription pipeline (push-to-talk release).
                                 // is_recording stays true so in-flight packets are captured;
                                 // stop_recording_command() will clear it.
                                 send_ble_button_event(&app_handle, false);
+                            }
+                            0x03 => {
+                                let recording_was_active = *is_recording.lock().unwrap()
+                                    || *device_button_active.lock().unwrap();
+
+                                if recording_was_active {
+                                    info!(
+                                        "BLE event: cancel recording and toggle conversation mode"
+                                    );
+                                    *discard_next_stop_event.lock().unwrap() = true;
+                                    cancel_ble_recording(&app_handle);
+                                } else {
+                                    info!("BLE event: toggle conversation mode");
+                                }
+                                match crate::conversation::toggle_mode(&app_handle) {
+                                    Ok(snapshot) => {
+                                        if !snapshot.active {
+                                            crate::overlay::show_normal_input_overlay(&app_handle);
+                                        }
+                                    }
+                                    Err(err) => {
+                                        error!("Failed to toggle conversation mode from BLE: {err}");
+                                    }
+                                }
                             }
                             other => {
                                 debug!("BLE event: unknown code {:#04x}", other);
@@ -352,25 +445,194 @@ impl BleManager {
 
             // Stream closed → connection lost.
             let was_recording = *is_recording.lock().unwrap();
-            *state.lock().unwrap() = ConnectionState::Disconnected;
-            *is_recording.lock().unwrap() = false;
-            *device_button_active.lock().unwrap() = false;
-            info!("BLE connection lost (notification stream closed)");
+            drop(recording_samples);
+            drop(is_recording);
+            drop(device_button_active);
+            drop(discard_next_stop_event);
+            drop(app_handle);
+            ble.handle_connection_loss("notification stream closed", was_recording);
+        });
+    }
 
-            let disconnected_status = BleStatus {
-                connected: false,
-                device_name: None,
-                device_address: None,
-            };
-            if let Err(e) = app_handle.emit("ble-status-changed", &disconnected_status) {
-                error!("Failed to emit ble-status-changed: {e}");
+    fn handle_connection_loss(&self, reason: &str, was_recording: bool) {
+        let already_disconnected = matches!(*self.state.lock().unwrap(), ConnectionState::Disconnected);
+        *self.peripheral.lock().unwrap() = None;
+        *self.state.lock().unwrap() = ConnectionState::Disconnected;
+        *self.is_recording.lock().unwrap() = false;
+        *self.device_button_active.lock().unwrap() = false;
+        *self.discard_next_stop_event.lock().unwrap() = false;
+
+        if already_disconnected {
+            debug!("BLE connection loss ignored because state was already disconnected ({reason})");
+        } else {
+            info!("BLE connection lost ({reason})");
+        }
+
+        let disconnected_status = BleStatus {
+            connected: false,
+            device_name: None,
+            device_address: None,
+        };
+        if let Err(e) = self.app_handle.emit("ble-status-changed", &disconnected_status) {
+            error!("Failed to emit ble-status-changed: {e}");
+        }
+
+        if was_recording {
+            send_ble_button_event(&self.app_handle, false);
+        }
+
+        self.schedule_auto_reconnect(reason.to_string());
+    }
+
+    fn schedule_auto_reconnect(&self, reason: String) {
+        if !*self.allow_auto_reconnect.lock().unwrap() {
+            info!("Skipping BLE auto-reconnect after {reason} because it was disabled");
+            return;
+        }
+
+        let mut reconnect_task_active = self.reconnect_task_active.lock().unwrap();
+        if *reconnect_task_active {
+            debug!("BLE auto-reconnect already running; not starting another task");
+            return;
+        }
+        *reconnect_task_active = true;
+        drop(reconnect_task_active);
+
+        let ble = self.clone();
+        tauri::async_runtime::spawn(async move {
+            info!("Starting BLE auto-reconnect after {reason}");
+            let mut attempt: u32 = 0;
+
+            loop {
+                attempt = attempt.saturating_add(1);
+
+                let settings = crate::settings::get_settings(&ble.app_handle);
+                let address = match (
+                    *ble.allow_auto_reconnect.lock().unwrap(),
+                    settings.audio_source,
+                    settings.ble_device_address.clone(),
+                ) {
+                    (false, _, _) => {
+                        info!("Stopping BLE auto-reconnect because it was disabled");
+                        break;
+                    }
+                    (_, crate::settings::AudioSource::Ble, Some(address)) => address,
+                    _ => {
+                        info!("Stopping BLE auto-reconnect because BLE is no longer the active source");
+                        break;
+                    }
+                };
+
+                if ble.is_connected() {
+                    debug!("Stopping BLE auto-reconnect because the device is already connected");
+                    break;
+                }
+
+                let delay_secs = if attempt <= 3 { 2 } else { 5 };
+                tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+
+                if ble.is_connected() {
+                    debug!("Skipping BLE reconnect attempt because the device reconnected already");
+                    break;
+                }
+
+                info!("BLE auto-reconnect attempt {} to {}", attempt, address);
+                match ble.connect_by_address(&address).await {
+                    Ok(()) => {
+                        info!("BLE auto-reconnect succeeded on attempt {}", attempt);
+                        ble.app_handle
+                            .state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+                            .initiate_model_load();
+                        break;
+                    }
+                    Err(err) => {
+                        warn!("BLE auto-reconnect attempt {} failed: {}", attempt, err);
+                    }
+                }
             }
 
-            // Cancel any recording that was in progress so the coordinator
-            // doesn't get stuck in Stage::Recording.
+            *ble.reconnect_task_active.lock().unwrap() = false;
+        });
+    }
+
+    pub fn handle_possible_system_resume(&self, gap: std::time::Duration) {
+        if !*self.allow_auto_reconnect.lock().unwrap() {
+            debug!("Skipping BLE resume recovery because auto-reconnect is disabled");
+            return;
+        }
+
+        let settings = crate::settings::get_settings(&self.app_handle);
+        let Some(address) = settings.ble_device_address.clone() else {
+            debug!("Skipping BLE resume recovery because there is no remembered device");
+            return;
+        };
+
+        if settings.audio_source != crate::settings::AudioSource::Ble {
+            debug!("Skipping BLE resume recovery because BLE is not the active audio source");
+            return;
+        }
+
+        let mut reconnect_task_active = self.reconnect_task_active.lock().unwrap();
+        if *reconnect_task_active {
+            debug!("Skipping BLE resume recovery because a reconnect task is already active");
+            return;
+        }
+        *reconnect_task_active = true;
+        drop(reconnect_task_active);
+
+        let ble = self.clone();
+        tauri::async_runtime::spawn(async move {
+            info!(
+                "Detected possible system resume after {:?}; refreshing BLE connection",
+                gap
+            );
+
+            let stale_peripheral = ble.peripheral.lock().unwrap().take();
+            if let Some(peripheral) = stale_peripheral {
+                if let Err(err) = peripheral.disconnect().await {
+                    debug!("BLE resume recovery disconnect returned error: {err}");
+                } else {
+                    info!("BLE resume recovery disconnected stale peripheral");
+                }
+            }
+
+            let was_recording = *ble.is_recording.lock().unwrap() || *ble.device_button_active.lock().unwrap();
+            *ble.state.lock().unwrap() = ConnectionState::Disconnected;
+            *ble.is_recording.lock().unwrap() = false;
+            *ble.device_button_active.lock().unwrap() = false;
+            *ble.discard_next_stop_event.lock().unwrap() = false;
+
+            if let Err(err) = ble.app_handle.emit(
+                "ble-status-changed",
+                &BleStatus {
+                    connected: false,
+                    device_name: None,
+                    device_address: None,
+                },
+            ) {
+                error!("Failed to emit ble-status-changed during resume recovery: {err}");
+            }
+
             if was_recording {
-                send_ble_button_event(&app_handle, false);
+                send_ble_button_event(&ble.app_handle, false);
             }
+
+            match ble.connect_by_address(&address).await {
+                Ok(()) => {
+                    info!("BLE resume recovery reconnect succeeded");
+                    ble.app_handle
+                        .state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+                        .initiate_model_load();
+                }
+                Err(err) => {
+                    warn!("BLE resume recovery reconnect failed: {err}");
+                    *ble.reconnect_task_active.lock().unwrap() = false;
+                    ble.schedule_auto_reconnect("resume recovery failure".to_string());
+                    return;
+                }
+            }
+
+            *ble.reconnect_task_active.lock().unwrap() = false;
         });
     }
 
@@ -390,7 +652,10 @@ impl BleManager {
         *self.is_recording.lock().unwrap() = false;
         *self.device_button_active.lock().unwrap() = false;
         let samples = std::mem::take(&mut *self.recording_samples.lock().unwrap());
-        info!("BLE device-button: collected {} samples synchronously", samples.len());
+        info!(
+            "BLE device-button: collected {} samples synchronously",
+            samples.len()
+        );
         Some(samples)
     }
 
@@ -474,6 +739,8 @@ impl BleManager {
     // ───────────────────────────────────────────────────── disconnect ──
 
     pub async fn disconnect(&self) -> Result<()> {
+        *self.allow_auto_reconnect.lock().unwrap() = false;
+        *self.reconnect_task_active.lock().unwrap() = false;
         *self.is_recording.lock().unwrap() = false;
         *self.device_button_active.lock().unwrap() = false;
         let peripheral = self.peripheral.lock().unwrap().take();
@@ -508,4 +775,8 @@ fn send_ble_button_event(app: &tauri::AppHandle, is_pressed: bool) {
     } else {
         warn!("BLE button event: TranscriptionCoordinator not available");
     }
+}
+
+fn cancel_ble_recording(app: &tauri::AppHandle) {
+    crate::utils::cancel_current_operation(app);
 }

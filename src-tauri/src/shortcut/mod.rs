@@ -990,11 +990,7 @@ pub async fn fetch_post_process_models(
     }
 
     // Get API key
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider_id)
-        .cloned()
-        .unwrap_or_default();
+    let api_key = settings::resolve_post_process_api_key(&settings, &provider_id).value;
 
     // Skip fetching if no API key for providers that typically need one
     if api_key.trim().is_empty() && provider.id != "custom" {

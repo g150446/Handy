@@ -230,7 +230,8 @@ pub async fn ble_connect_first(app: AppHandle, scan_secs: u64) -> Result<BleStat
     // Pre-load transcription model so it's ready before the user presses the button.
     // Without this, model loading starts on first button press and can starve the
     // BLE event loop (causing disconnection).
-    app.state::<Arc<TranscriptionManager>>().initiate_model_load();
+    app.state::<Arc<TranscriptionManager>>()
+        .initiate_model_load();
     let status = ble.status();
     // Persist the device address so auto-connect works on next launch.
     if let Some(ref addr) = status.device_address {
@@ -244,21 +245,22 @@ pub async fn ble_connect_first(app: AppHandle, scan_secs: u64) -> Result<BleStat
 /// Connect to a specific BLE device by address.
 #[tauri::command]
 #[specta::specta]
-pub async fn ble_connect_by_address(
-    app: AppHandle,
-    address: String,
-) -> Result<BleStatus, String> {
+pub async fn ble_connect_by_address(app: AppHandle, address: String) -> Result<BleStatus, String> {
     let ble = app.state::<Arc<BleManager>>();
     ble.connect_by_address(&address)
         .await
         .map_err(|e| e.to_string())?;
     // Pre-load transcription model so it's ready before the user presses the button.
-    app.state::<Arc<TranscriptionManager>>().initiate_model_load();
+    app.state::<Arc<TranscriptionManager>>()
+        .initiate_model_load();
     // Persist the device address so auto-connect works on next launch.
-    let mut settings = get_settings(&app);
-    settings.ble_device_address = Some(address);
-    write_settings(&app, settings);
-    Ok(ble.status())
+    let status = ble.status();
+    if let Some(ref connected_address) = status.device_address {
+        let mut settings = get_settings(&app);
+        settings.ble_device_address = Some(connected_address.clone());
+        write_settings(&app, settings);
+    }
+    Ok(status)
 }
 
 /// Disconnect the BLE device.

@@ -12,9 +12,38 @@
     "models": "モデル",
     "advanced": "詳細設定",
     "postProcessing": "後処理",
+    "openrouter": "OpenRouter",
     "history": "履歴",
     "debug": "デバッグ",
     "about": "概要"
+  },
+  "conversation": {
+    "title": "OpenRouter 対話",
+    "subtitle": "デバイスのダブルクリックでこのモードをオン / オフできます。",
+    "status": {
+      "inactive": "停止中",
+      "missingApiKey": "OpenRouter 環境変数未設定",
+      "missingModel": "モデル未設定",
+      "active": "有効 · {{model}}"
+    },
+    "roles": {
+      "user": "あなた",
+      "assistant": "アシスタント"
+    },
+    "empty": {
+      "title": "対話の準備ができました",
+      "description": "対話モードが有効な間、ここで送信したメッセージは設定済みの OpenRouter モデルに送られます。"
+    },
+    "errors": {
+      "missingApiKey": "対話を始める前に、OPENROUTER_API_KEY 環境変数を設定してください。",
+      "missingModel": "メッセージ送信前に、設定画面で OpenRouter モデルを選択してください。"
+    },
+    "help": {
+      "toggleBack": "通常入力モードへ戻るには、デバイスをもう一度ダブルクリックしてください。"
+    },
+    "inputPlaceholder": "メッセージを入力してください…",
+    "send": "送信",
+    "sending": "OpenRouter からの応答を待っています..."
   },
   "onboarding": {
     "subtitle": "開始するには、文字起こしモデルを選択してください",
@@ -143,6 +172,25 @@
     "modelSettings": {
       "title": "{{model}} 設定",
       "noSettingsNeeded": "このモデルは設定不要で自動的に動作します。"
+    },
+    "openrouter": {
+      "title": "OpenRouter 対話",
+      "apiKey": {
+        "title": "API キー",
+        "description": "対話機能では、Handy に保存した値ではなく macOS の環境変数から OpenRouter API キーを読み取ります。",
+        "environment": "OpenRouter 認証には {{envVar}} 環境変数を使用します。"
+      },
+      "model": {
+        "title": "対話モデル",
+        "description": "対話モードで応答に使う OpenRouter モデルを選択します。",
+        "placeholder": "モデル名を選択または入力",
+        "refreshModels": "モデル一覧を更新"
+      },
+      "conversation": {
+        "title": "モードの動作",
+        "description": "会話履歴は対話モード中のメモリにのみ保持されます。もう一度ダブルクリックすると通常入力モードに戻ります。",
+        "refreshAction": "OpenRouter モデル一覧を更新"
+      }
     },
     "models": {
       "title": "転写モデル",
@@ -573,6 +621,7 @@
   },
   "overlay": {
     "transcribing": "文字起こし中...",
-    "processing": "処理中..."
+    "processing": "処理中...",
+    "normalInput": "通常入力モードに戻りました"
   }
 }
