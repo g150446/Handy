@@ -264,8 +264,8 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
 
 const TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT: &str = "あなたは音声認識テキストの誤変換修正ツールです。\n入力されたテキストの音声認識による誤りのみを修正してください。\n\n修正対象:\n- 同音異義語の誤変換（例:「機械」→「機会」など文脈に合わない語）\n- 助詞の欠落・誤認識（は/が/を/に の取り違え）\n- 数字・単位の誤認識\n- 明らかに文脈に合わない語の誤認識\n\n厳守事項:\n- 元の意味・語順・内容を一切変えない\n- 言い換え・要約・補足は行わない\n- 修正が不要な場合は入力テキストをそのまま返す\n\n必ず以下のJSON形式で返してください:\n{\"transcription\": \"修正後のテキスト\"}";
 
-const CORRECTION_PROVIDER_ID: &str = "custom";
-const CORRECTION_DEFAULT_MODEL: &str = "qwen3.5:2b";
+const CORRECTION_PROVIDER_ID: &str = "groq";
+const CORRECTION_DEFAULT_MODEL: &str = "openai/gpt-oss-20b";
 
 /// Extract the `transcription` field from a JSON response.
 /// Falls back to scanning for `{...}` in case the model wraps the JSON in prose.
@@ -321,51 +321,56 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
         }
     };
 
-    // Local Ollama doesn't require an API key
-    let api_key = settings
-        .post_process_api_keys
-        .get(CORRECTION_PROVIDER_ID)
-        .cloned()
-        .unwrap_or_default();
+    let api_key = resolve_post_process_api_key(&settings, CORRECTION_PROVIDER_ID).value;
+    if api_key.trim().is_empty() {
+        warn!("[Correction] Skipped: no Groq API key configured for provider '{}'", CORRECTION_PROVIDER_ID);
+        return None;
+    }
 
-    info!("[Correction] Calling local model {} ...", model);
+    info!("[Correction] Calling Groq model {} ...", model);
     info!("[Correction] Input:  \"{}\"", transcription);
 
-    match crate::llm_client::send_chat_completion_with_schema(
+    let api_call = crate::llm_client::send_chat_completion_with_schema(
         &provider,
         api_key,
         &model,
         transcription.to_string(),
         Some(TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT.to_string()),
         None, // local models: rely on prompt instruction instead of json_schema
-    )
-    .await
-    {
-        Ok(Some(content)) => {
-            match extract_transcription_from_response(&content) {
-                Some(corrected) => {
-                    let result = strip_invisible_chars(&corrected);
-                    if result == transcription {
-                        info!("[Correction] Output: \"{}\" (no change)", result);
-                        return None;
+    );
+
+    match tokio::time::timeout(std::time::Duration::from_secs(15), api_call).await {
+        Err(_) => {
+            warn!("[Correction] Timed out after 15s. Using original text.");
+            return None;
+        }
+        Ok(result) => match result {
+            Ok(Some(content)) => {
+                match extract_transcription_from_response(&content) {
+                    Some(corrected) => {
+                        let result = strip_invisible_chars(&corrected);
+                        if result == transcription {
+                            info!("[Correction] Output: \"{}\" (no change)", result);
+                            return None;
+                        }
+                        info!("[Correction] Output: \"{}\" ← CHANGED", result);
+                        Some(result)
                     }
-                    info!("[Correction] Output: \"{}\" ← CHANGED", result);
-                    Some(result)
-                }
-                None => {
-                    warn!("[Correction] Could not extract 'transcription' field from response: {}", content);
-                    None
+                    None => {
+                        warn!("[Correction] Could not extract 'transcription' field from response: {}", content);
+                        None
+                    }
                 }
             }
-        }
-        Ok(None) => {
-            warn!("[Correction] Empty response from local model");
-            None
-        }
-        Err(e) => {
-            warn!("[Correction] API call failed: {}. Using original text.", e);
-            None
-        }
+            Ok(None) => {
+                warn!("[Correction] Empty response from local model");
+                None
+            }
+            Err(e) => {
+                warn!("[Correction] API call failed: {}. Using original text.", e);
+                None
+            }
+        },
     }
 }
 
