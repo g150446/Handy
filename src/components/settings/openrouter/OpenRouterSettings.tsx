@@ -9,7 +9,6 @@ import { ResetButton } from "@/components/ui/ResetButton";
 import { useSettings } from "@/hooks/useSettings";
 
 import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
-import { TranscriptionCorrectionToggle } from "../TranscriptionCorrectionToggle";
 
 const PROVIDER_ID = "openrouter";
 const OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY";
@@ -87,10 +86,6 @@ export const OpenRouterSettings: React.FC = () => {
             </ResetButton>
           </div>
         </SettingContainer>
-      </SettingsGroup>
-
-      <SettingsGroup title={t("settings.transcriptionCorrection.groupTitle")}>
-        <TranscriptionCorrectionToggle descriptionMode="inline" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.openrouter.conversation.title")}>

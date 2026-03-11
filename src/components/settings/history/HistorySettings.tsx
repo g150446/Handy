@@ -314,7 +314,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
           <div className="border-l-2 border-logo-primary/40 pl-2">
             <p className="text-xs font-medium text-logo-primary/70 uppercase tracking-wide mb-0.5">
               {entry.post_process_prompt?.includes("誤変換修正ツール")
-                ? t("settings.history.correctedByOpenRouter")
+                ? t("settings.history.correctedByGroq")
                 : t("settings.history.processedLabel")}
             </p>
             <p className="italic text-text/90 text-sm select-text cursor-text">

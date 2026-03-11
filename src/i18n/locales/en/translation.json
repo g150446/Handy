@@ -471,13 +471,13 @@
       "delete": "Delete entry",
       "deleteError": "Failed to delete entry. Please try again.",
       "originalLabel": "STT output",
-      "correctedByOpenRouter": "OpenRouter corrected",
+      "correctedByGroq": "Groq corrected",
       "processedLabel": "AI processed"
     },
     "transcriptionCorrection": {
-      "groupTitle": "Auto Correction",
-      "label": "Transcription Auto Correction (OpenRouter)",
-      "description": "Automatically correct misrecognized words before pasting. Uses the OpenRouter API key and model configured above."
+      "groupTitle": "Auto Correction (Groq)",
+      "label": "Transcription Auto Correction",
+      "description": "Automatically correct misrecognized words before pasting using Groq API (GROQ_API_KEY). Model: openai/gpt-oss-20b."
     },
     "debug": {
       "title": "Debug",
