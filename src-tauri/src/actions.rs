@@ -6,6 +6,7 @@ use crate::managers::history::HistoryManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
     get_settings, resolve_post_process_api_key, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID,
+    GROQ_PROVIDER_ID,
 };
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
@@ -264,7 +265,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
 
 const TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT: &str = "あなたは音声認識テキストの誤変換修正ツールです。\n入力されたテキストの音声認識による誤りのみを修正してください。\n\n修正対象:\n- 同音異義語の誤変換（例:「機械」→「機会」など文脈に合わない語）\n- 助詞の欠落・誤認識（は/が/を/に の取り違え）\n- 数字・単位の誤認識\n- 明らかに文脈に合わない語の誤認識\n\n厳守事項:\n- 元の意味・語順・内容を一切変えない\n- 言い換え・要約・補足は行わない\n- 修正が不要な場合は入力テキストをそのまま返す\n\n必ず以下のJSON形式で返してください:\n{\"transcription\": \"修正後のテキスト\"}";
 
-const CORRECTION_PROVIDER_ID: &str = "groq";
+const CORRECTION_PROVIDER_ID: &str = GROQ_PROVIDER_ID;
 const CORRECTION_DEFAULT_MODEL: &str = "openai/gpt-oss-20b";
 
 /// Extract the `transcription` field from a JSON response.

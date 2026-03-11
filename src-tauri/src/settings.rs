@@ -12,6 +12,8 @@ pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
 pub const OPENROUTER_PROVIDER_ID: &str = "openrouter";
 pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "qwen/qwen3.5-9b";
 pub const OPENROUTER_API_KEY_ENV_VAR: &str = "OPENROUTER_API_KEY";
+pub const GROQ_PROVIDER_ID: &str = "groq";
+pub const GROQ_API_KEY_ENV_VAR: &str = "GROQ_API_KEY";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -594,8 +596,9 @@ fn default_model_for_provider(provider_id: &str) -> String {
     String::new()
 }
 
-fn read_openrouter_api_key_from_environment() -> Option<String> {
-    if let Ok(value) = std::env::var(OPENROUTER_API_KEY_ENV_VAR) {
+
+fn read_env_api_key(env_var: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(env_var) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_string());
@@ -605,7 +608,7 @@ fn read_openrouter_api_key_from_environment() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         if let Ok(output) = Command::new("launchctl")
-            .args(["getenv", OPENROUTER_API_KEY_ENV_VAR])
+            .args(["getenv", env_var])
             .output()
         {
             if output.status.success() {
@@ -624,7 +627,16 @@ fn read_openrouter_api_key_from_environment() -> Option<String> {
 
 pub fn resolve_post_process_api_key(settings: &AppSettings, provider_id: &str) -> ResolvedApiKey {
     if provider_id == OPENROUTER_PROVIDER_ID {
-        if let Some(value) = read_openrouter_api_key_from_environment() {
+        if let Some(value) = read_env_api_key(OPENROUTER_API_KEY_ENV_VAR) {
+            return ResolvedApiKey {
+                value,
+                source: ApiKeySource::Environment,
+            };
+        }
+    }
+
+    if provider_id == GROQ_PROVIDER_ID {
+        if let Some(value) = read_env_api_key(GROQ_API_KEY_ENV_VAR) {
             return ResolvedApiKey {
                 value,
                 source: ApiKeySource::Environment,
