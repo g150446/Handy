@@ -6,7 +6,6 @@ use crate::managers::history::HistoryManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
     get_settings, resolve_post_process_api_key, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID,
-    OPENROUTER_PROVIDER_ID,
 };
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
@@ -265,6 +264,34 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
 
 const TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT: &str = "あなたは音声認識テキストの誤変換修正ツールです。\n入力されたテキストの音声認識による誤りのみを修正してください。\n\n修正対象:\n- 同音異義語の誤変換（例:「機械」→「機会」など文脈に合わない語）\n- 助詞の欠落・誤認識（は/が/を/に の取り違え）\n- 数字・単位の誤認識\n- 明らかに文脈に合わない語の誤認識\n\n厳守事項:\n- 元の意味・語順・内容を一切変えない\n- 言い換え・要約・補足は行わない\n- 修正が不要な場合は入力テキストをそのまま返す\n\n必ず以下のJSON形式で返してください:\n{\"transcription\": \"修正後のテキスト\"}";
 
+const CORRECTION_PROVIDER_ID: &str = "custom";
+const CORRECTION_DEFAULT_MODEL: &str = "qwen3.5:2b";
+
+/// Extract the `transcription` field from a JSON response.
+/// Falls back to scanning for `{...}` in case the model wraps the JSON in prose.
+fn extract_transcription_from_response(content: &str) -> Option<String> {
+    // Try direct parse first
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(content) {
+        if let Some(t) = json.get(TRANSCRIPTION_FIELD).and_then(|v| v.as_str()) {
+            return Some(t.to_string());
+        }
+    }
+    // Try to extract the first {...} block from the response
+    if let Some(start) = content.find('{') {
+        if let Some(end) = content.rfind('}') {
+            if end > start {
+                let candidate = &content[start..=end];
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(candidate) {
+                    if let Some(t) = json.get(TRANSCRIPTION_FIELD).and_then(|v| v.as_str()) {
+                        return Some(t.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<String> {
     let settings = get_settings(app);
 
@@ -272,42 +299,37 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
         return None;
     }
 
-    let provider = match settings.post_process_provider(OPENROUTER_PROVIDER_ID).cloned() {
+    let provider = match settings.post_process_provider(CORRECTION_PROVIDER_ID).cloned() {
         Some(p) => p,
         None => {
-            warn!("[Correction] OpenRouter provider not found in settings");
+            warn!("[Correction] Local provider '{}' not found in settings", CORRECTION_PROVIDER_ID);
             return None;
         }
     };
 
-    let model = settings
-        .post_process_models
-        .get(OPENROUTER_PROVIDER_ID)
+    // Use configured model, or fall back to the default local model
+    let model = {
+        let configured = settings
+            .post_process_models
+            .get(CORRECTION_PROVIDER_ID)
+            .cloned()
+            .unwrap_or_default();
+        if configured.trim().is_empty() {
+            CORRECTION_DEFAULT_MODEL.to_string()
+        } else {
+            configured
+        }
+    };
+
+    // Local Ollama doesn't require an API key
+    let api_key = settings
+        .post_process_api_keys
+        .get(CORRECTION_PROVIDER_ID)
         .cloned()
         .unwrap_or_default();
 
-    if model.trim().is_empty() {
-        warn!("[Correction] Skipped: no OpenRouter model configured");
-        return None;
-    }
-
-    let api_key = resolve_post_process_api_key(&settings, OPENROUTER_PROVIDER_ID).value;
-    if api_key.trim().is_empty() {
-        warn!("[Correction] Skipped: no OpenRouter API key configured");
-        return None;
-    }
-
-    info!("[Correction] Calling OpenRouter (model: {}) ...", model);
+    info!("[Correction] Calling local model {} ...", model);
     info!("[Correction] Input:  \"{}\"", transcription);
-
-    let json_schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "transcription": { "type": "string" }
-        },
-        "required": ["transcription"],
-        "additionalProperties": false
-    });
 
     match crate::llm_client::send_chat_completion_with_schema(
         &provider,
@@ -315,34 +337,29 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
         &model,
         transcription.to_string(),
         Some(TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT.to_string()),
-        Some(json_schema),
+        None, // local models: rely on prompt instruction instead of json_schema
     )
     .await
     {
         Ok(Some(content)) => {
-            match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(json) => {
-                    if let Some(corrected) = json.get(TRANSCRIPTION_FIELD).and_then(|t| t.as_str()) {
-                        let result = strip_invisible_chars(corrected);
-                        // Return None if unchanged (no correction needed)
-                        if result == transcription {
-                            info!("[Correction] Output: \"{}\" (no change)", result);
-                            return None;
-                        }
-                        info!("[Correction] Output: \"{}\" ← CHANGED", result);
-                        return Some(result);
+            match extract_transcription_from_response(&content) {
+                Some(corrected) => {
+                    let result = strip_invisible_chars(&corrected);
+                    if result == transcription {
+                        info!("[Correction] Output: \"{}\" (no change)", result);
+                        return None;
                     }
-                    warn!("[Correction] Response missing 'transcription' field");
-                    None
+                    info!("[Correction] Output: \"{}\" ← CHANGED", result);
+                    Some(result)
                 }
-                Err(e) => {
-                    warn!("[Correction] Failed to parse JSON response: {}", e);
+                None => {
+                    warn!("[Correction] Could not extract 'transcription' field from response: {}", content);
                     None
                 }
             }
         }
         Ok(None) => {
-            warn!("[Correction] Empty response from API");
+            warn!("[Correction] Empty response from local model");
             None
         }
         Err(e) => {
