@@ -10,8 +10,8 @@ import { useSettings } from "@/hooks/useSettings";
 
 import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 
-const PROVIDER_ID = "openrouter";
-const OPENROUTER_API_KEY_ENV_VAR = "OPENROUTER_API_KEY";
+const PROVIDER_ID = "groq";
+const GROQ_API_KEY_ENV_VAR = "GROQ_API_KEY";
 
 export const OpenRouterSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -46,7 +46,7 @@ export const OpenRouterSettings: React.FC = () => {
         >
           <Alert variant="info" className="rounded-lg">
             {t("settings.openrouter.apiKey.environment", {
-              envVar: OPENROUTER_API_KEY_ENV_VAR,
+              envVar: GROQ_API_KEY_ENV_VAR,
             })}
           </Alert>
         </SettingContainer>

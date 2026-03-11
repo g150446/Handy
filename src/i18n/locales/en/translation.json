@@ -12,7 +12,7 @@
     "models": "Models",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
-    "openrouter": "OpenRouter",
+    "openrouter": "Groq",
     "history": "History",
     "debug": "Debug",
     "about": "About"
@@ -22,7 +22,7 @@
     "subtitle": "Double-click the device button to toggle this mode on or off.",
     "status": {
       "inactive": "Inactive",
-      "missingApiKey": "Missing OpenRouter environment key",
+      "missingApiKey": "Missing Groq API key",
       "missingModel": "Missing model",
       "active": "Active · {{model}}"
     },
@@ -35,15 +35,15 @@
       "description": "When control mode is active, voice commands will be interpreted as actions or conversation."
     },
     "errors": {
-      "missingApiKey": "Set the OPENROUTER_API_KEY environment variable before starting a conversation.",
-      "missingModel": "Choose an OpenRouter model in Settings before sending a message."
+      "missingApiKey": "Set the GROQ_API_KEY environment variable before starting a conversation.",
+      "missingModel": "Choose a Groq model in Settings before sending a message."
     },
     "help": {
       "toggleBack": "Double-click the device button again to return to normal input mode."
     },
     "inputPlaceholder": "Type your message here…",
     "send": "Send",
-    "sending": "Waiting for OpenRouter..."
+    "sending": "Waiting for Groq..."
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -176,22 +176,22 @@
       "noSettingsNeeded": "This model works automatically with no configuration needed."
     },
     "openrouter": {
-      "title": "OpenRouter Conversation",
+      "title": "Groq Conversation",
       "apiKey": {
         "title": "API Key",
-        "description": "The conversation feature reads the OpenRouter API key from your macOS environment instead of storing it in Handy.",
-        "environment": "Using the {{envVar}} environment variable for OpenRouter authentication."
+        "description": "The conversation feature reads the Groq API key from your macOS environment instead of storing it in Handy.",
+        "environment": "Using the {{envVar}} environment variable for Groq authentication."
       },
       "model": {
         "title": "Conversation Model",
-        "description": "Choose which OpenRouter model should answer in conversation mode.",
+        "description": "Choose which Groq model should answer in conversation mode.",
         "placeholder": "Select or type a model name",
         "refreshModels": "Refresh models"
       },
       "conversation": {
         "title": "Mode Behavior",
         "description": "Conversation history is kept only in memory while conversation mode is active. Another double-click returns Handy to normal input mode.",
-        "refreshAction": "Refresh OpenRouter Models"
+        "refreshAction": "Refresh Groq Models"
       }
     },
     "general": {

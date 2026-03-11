@@ -6,7 +6,7 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
-use crate::settings::{self, ApiKeySource, OPENROUTER_PROVIDER_ID};
+use crate::settings::{self, ApiKeySource, GROQ_PROVIDER_ID};
 
 pub const CONTROL_WINDOW_LABEL: &str = "control";
 const CONTROL_WINDOW_WIDTH: f64 = 230.0;
@@ -196,8 +196,9 @@ fn build_control_system_prompt(last_pasted: Option<&str>) -> String {
         "You are a voice control assistant for a desktop app called Handy.\n\
          You can either perform control actions OR respond conversationally.\n\n\
          AVAILABLE ACTIONS:\n\
-         - Undo the last pasted text: respond ONLY with the JSON: {\"action\":\"undo_last_input\"}\n\n\
-         Use the action JSON ONLY when the user clearly wants to cancel/undo/delete their last input.\n\
+         - Undo the last pasted text: respond ONLY with the JSON: {\"action\":\"undo_last_input\"}\n\
+         - Press the Enter key: respond ONLY with the JSON: {\"action\":\"send_enter_key\"}\n\n\
+         Use action JSON ONLY when the user clearly wants that specific action.\n\
          For all other requests, respond normally as a helpful assistant.",
     );
     if let Some(text) = last_pasted {
@@ -219,23 +220,23 @@ async fn submit_prompt(
     let (messages_for_request, provider, api_key, model, optimistic_snapshot) = {
         let settings = settings::get_settings(app_handle);
         let provider = settings
-            .post_process_provider(OPENROUTER_PROVIDER_ID)
+            .post_process_provider(GROQ_PROVIDER_ID)
             .cloned()
-            .ok_or_else(|| "OpenRouter provider is not configured".to_string())?;
+            .ok_or_else(|| "Groq provider is not configured".to_string())?;
 
         let resolved_api_key =
-            settings::resolve_post_process_api_key(&settings, OPENROUTER_PROVIDER_ID);
+            settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID);
         if resolved_api_key.value.trim().is_empty() {
-            return Err("OpenRouter API key is not configured".to_string());
+            return Err("Groq API key is not configured".to_string());
         }
 
         let model = settings
             .post_process_models
-            .get(OPENROUTER_PROVIDER_ID)
+            .get(GROQ_PROVIDER_ID)
             .cloned()
             .unwrap_or_default();
         if model.trim().is_empty() {
-            return Err("OpenRouter model is not configured".to_string());
+            return Err("Groq model is not configured".to_string());
         }
 
         let state = app_handle.state::<ControlModeState>();
@@ -279,7 +280,7 @@ async fn submit_prompt(
 
     emit_state_changed(app_handle, &optimistic_snapshot);
 
-    log::info!("Sending control request to OpenRouter (model={model})");
+    log::info!("Sending control request to Groq (model={model})");
     match crate::llm_client::send_chat_messages(&provider, api_key, &model, messages_for_request)
         .await
     {
@@ -289,6 +290,26 @@ async fn submit_prompt(
             let reply_trimmed = reply.trim();
             let json_candidate = strip_markdown_code_fence(reply_trimmed);
             if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(json_candidate) {
+                if json_val.get("action").and_then(|a| a.as_str()) == Some("send_enter_key") {
+                    let enter_message = execute_enter_key_action(app_handle).await;
+
+                    let snapshot = {
+                        let state = app_handle.state::<ControlModeState>();
+                        let mut inner = state.inner.lock().unwrap();
+                        inner.messages.push(ControlTurn {
+                            role: "assistant".to_string(),
+                            content: enter_message,
+                        });
+                        inner.is_sending = false;
+                        inner.last_error = None;
+                        build_snapshot(app_handle, &inner)
+                    };
+                    log::info!("Executed send_enter_key action from control mode");
+                    emit_state_changed(app_handle, &snapshot);
+                    schedule_auto_exit(app_handle, snapshot.session_id);
+                    return Ok(snapshot);
+                }
+
                 if json_val.get("action").and_then(|a| a.as_str()) == Some("undo_last_input") {
                     let undo_message = execute_undo_last_input(app_handle).await;
                     clear_last_pasted_text(app_handle);
@@ -324,7 +345,7 @@ async fn submit_prompt(
                 build_snapshot(app_handle, &inner)
             };
             log::info!(
-                "Received OpenRouter response for control mode (chars={})",
+                "Received Groq response for control mode (chars={})",
                 snapshot
                     .messages
                     .last()
@@ -336,7 +357,7 @@ async fn submit_prompt(
             Ok(snapshot)
         }
         Ok(None) => {
-            let err = "OpenRouter returned an empty response".to_string();
+            let err = "Groq returned an empty response".to_string();
             set_error_state(app_handle, &err)
         }
         Err(err) => set_error_state(app_handle, &err),
@@ -487,6 +508,70 @@ async fn execute_undo_last_input(app: &AppHandle) -> String {
     "[直前の入力を取り消しました]".to_string()
 }
 
+async fn execute_enter_key_action(app: &AppHandle) -> String {
+    let prev_app = app
+        .state::<ControlModeState>()
+        .prev_frontmost_app
+        .lock()
+        .unwrap()
+        .clone();
+
+    if let Some(window) = app.get_webview_window(CONTROL_WINDOW_LABEL) {
+        let _ = window.hide();
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(ref app_name) = prev_app {
+            log::info!("Restoring focus to '{}' and sending Return key", app_name);
+            let script = format!(
+                "tell application \"{}\" to activate\ndelay 0.3\n\
+                 tell application \"System Events\" to key code 36",
+                app_name
+            );
+            tauri::async_runtime::spawn_blocking(move || {
+                std::process::Command::new("osascript")
+                    .args(["-e", &script])
+                    .output()
+                    .ok();
+            })
+            .await
+            .ok();
+        } else {
+            log::warn!("No previous app recorded; sending Return via enigo");
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            send_enter_via_enigo(app);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        send_enter_via_enigo(app);
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Some(window) = app.get_webview_window(CONTROL_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    "[Enterキーを送信しました]".to_string()
+}
+
+fn send_enter_via_enigo(app: &AppHandle) {
+    let app_clone = app.clone();
+    app.run_on_main_thread(move || {
+        use crate::input::EnigoState;
+        use enigo::{Direction, Key, Keyboard};
+        if let Some(enigo_state) = app_clone.try_state::<EnigoState>() {
+            let mut enigo = enigo_state.0.lock().unwrap();
+            let _ = enigo.key(Key::Return, Direction::Click);
+        }
+    })
+    .ok();
+}
+
 fn send_undo_via_enigo(app: &AppHandle) {
     // macOS virtual key codes: Z = 0x06 (kVK_ANSI_Z)
     let app_clone = app.clone();
@@ -546,7 +631,7 @@ fn set_error_state(app_handle: &AppHandle, err: &str) -> Result<ControlStateSnap
 fn build_snapshot(app_handle: &AppHandle, inner: &ControlRuntimeState) -> ControlStateSnapshot {
     let settings = settings::get_settings(app_handle);
     let api_key_source =
-        settings::resolve_post_process_api_key(&settings, OPENROUTER_PROVIDER_ID).source;
+        settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID).source;
     let has_last_pasted = app_handle
         .state::<ControlModeState>()
         .last_pasted_text

@@ -23,7 +23,7 @@ type ControlModeSnapshot = {
   has_last_pasted: boolean;
 };
 
-const OPENROUTER_PROVIDER_ID = "openrouter";
+const GROQ_PROVIDER_ID = "groq";
 
 const roleIcon = (role: string) => {
   if (role === "assistant") {
@@ -42,7 +42,7 @@ export const ConversationWindow = () => {
   const prevMessageCountRef = useRef<number>(0);
   const lastAssistantRef = useRef<HTMLDivElement | null>(null);
 
-  const model = settings?.post_process_models?.[OPENROUTER_PROVIDER_ID] ?? "";
+  const model = settings?.post_process_models?.[GROQ_PROVIDER_ID] ?? "";
   const messages = mode?.messages ?? [];
   const isSending = mode?.is_sending ?? false;
   const error = mode?.last_error ?? null;

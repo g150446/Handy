@@ -13,6 +13,7 @@ pub const OPENROUTER_PROVIDER_ID: &str = "openrouter";
 pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "qwen/qwen3.5-9b";
 pub const OPENROUTER_API_KEY_ENV_VAR: &str = "OPENROUTER_API_KEY";
 pub const GROQ_PROVIDER_ID: &str = "groq";
+pub const GROQ_DEFAULT_MODEL_ID: &str = "openai/gpt-oss-120b";
 pub const GROQ_API_KEY_ENV_VAR: &str = "GROQ_API_KEY";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
@@ -402,7 +403,7 @@ pub struct AppSettings {
     /// BLE device address used when `audio_source == AudioSource::Ble`.
     #[serde(default)]
     pub ble_device_address: Option<String>,
-    /// When enabled, transcriptions are automatically corrected via OpenRouter
+    /// When enabled, transcriptions are automatically corrected via Groq
     /// before pasting (uses the same provider/model settings as post-processing).
     #[serde(default)]
     pub transcription_correction_enabled: bool,
@@ -592,6 +593,9 @@ fn default_model_for_provider(provider_id: &str) -> String {
     }
     if provider_id == OPENROUTER_PROVIDER_ID {
         return OPENROUTER_DEFAULT_MODEL_ID.to_string();
+    }
+    if provider_id == GROQ_PROVIDER_ID {
+        return GROQ_DEFAULT_MODEL_ID.to_string();
     }
     String::new()
 }

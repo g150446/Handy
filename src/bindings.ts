@@ -851,7 +851,7 @@ audio_source?: AudioSource;
  */
 ble_device_address?: string | null; 
 /**
- * When enabled, transcriptions are automatically corrected via OpenRouter
+ * When enabled, transcriptions are automatically corrected via Groq
  * before pasting (uses the same provider/model settings as post-processing).
  */
 transcription_correction_enabled?: boolean }
