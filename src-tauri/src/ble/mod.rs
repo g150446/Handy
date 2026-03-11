@@ -42,6 +42,7 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager as TauriManager};
 use uuid::{uuid, Uuid};
 
@@ -57,6 +58,9 @@ const AUDIO_SYNC_BYTE: u8 = 0xAA;
 const EVENT_SYNC_BYTE: u8 = 0x55;
 /// Minimum PCM bytes required to accept an audio packet.
 const MIN_PCM_BYTES: usize = 2;
+const RECONNECT_TASK_STALE_AFTER: Duration = Duration::from_secs(45);
+const BLE_RESUME_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const BLE_RECONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(20);
 
 // ── BLE binding id used when the physical device button triggers recording ──
 const BLE_BUTTON_BINDING: &str = "transcribe";
@@ -100,7 +104,7 @@ pub struct BleManager {
     /// Disabled by explicit user disconnect so we do not immediately reconnect
     /// against the user's intent.
     allow_auto_reconnect: Arc<Mutex<bool>>,
-    reconnect_task_active: Arc<Mutex<bool>>,
+    reconnect_task_started_at: Arc<Mutex<Option<Instant>>>,
 }
 
 impl BleManager {
@@ -114,8 +118,35 @@ impl BleManager {
             device_button_active: Arc::new(Mutex::new(false)),
             discard_next_stop_event: Arc::new(Mutex::new(false)),
             allow_auto_reconnect: Arc::new(Mutex::new(true)),
-            reconnect_task_active: Arc::new(Mutex::new(false)),
+            reconnect_task_started_at: Arc::new(Mutex::new(None)),
         }
+    }
+
+    fn try_begin_reconnect_task(&self, trigger: &str) -> bool {
+        let mut started_at = self.reconnect_task_started_at.lock().unwrap();
+
+        if let Some(previous_start) = *started_at {
+            let age = previous_start.elapsed();
+            if age <= RECONNECT_TASK_STALE_AFTER {
+                debug!(
+                    "Skipping BLE reconnect task for {trigger} because another task has been running for {:?}",
+                    age
+                );
+                return false;
+            }
+
+            warn!(
+                "Recovering stale BLE reconnect task before {trigger}; previous task age was {:?}",
+                age
+            );
+        }
+
+        *started_at = Some(Instant::now());
+        true
+    }
+
+    fn finish_reconnect_task(&self) {
+        *self.reconnect_task_started_at.lock().unwrap() = None;
     }
 
     // ──────────────────────────────────────────────────────── status ──
@@ -490,13 +521,9 @@ impl BleManager {
             return;
         }
 
-        let mut reconnect_task_active = self.reconnect_task_active.lock().unwrap();
-        if *reconnect_task_active {
-            debug!("BLE auto-reconnect already running; not starting another task");
+        if !self.try_begin_reconnect_task("auto reconnect") {
             return;
         }
-        *reconnect_task_active = true;
-        drop(reconnect_task_active);
 
         let ble = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -537,21 +564,32 @@ impl BleManager {
                 }
 
                 info!("BLE auto-reconnect attempt {} to {}", attempt, address);
-                match ble.connect_by_address(&address).await {
-                    Ok(()) => {
+                match tokio::time::timeout(
+                    BLE_RECONNECT_ATTEMPT_TIMEOUT,
+                    ble.connect_by_address(&address),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {
                         info!("BLE auto-reconnect succeeded on attempt {}", attempt);
                         ble.app_handle
                             .state::<Arc<crate::managers::transcription::TranscriptionManager>>()
                             .initiate_model_load();
                         break;
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         warn!("BLE auto-reconnect attempt {} failed: {}", attempt, err);
+                    }
+                    Err(_) => {
+                        warn!(
+                            "BLE auto-reconnect attempt {} timed out after {:?}",
+                            attempt, BLE_RECONNECT_ATTEMPT_TIMEOUT
+                        );
                     }
                 }
             }
 
-            *ble.reconnect_task_active.lock().unwrap() = false;
+            ble.finish_reconnect_task();
         });
     }
 
@@ -572,13 +610,9 @@ impl BleManager {
             return;
         }
 
-        let mut reconnect_task_active = self.reconnect_task_active.lock().unwrap();
-        if *reconnect_task_active {
-            debug!("Skipping BLE resume recovery because a reconnect task is already active");
+        if !self.try_begin_reconnect_task("resume recovery") {
             return;
         }
-        *reconnect_task_active = true;
-        drop(reconnect_task_active);
 
         let ble = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -589,10 +623,21 @@ impl BleManager {
 
             let stale_peripheral = ble.peripheral.lock().unwrap().take();
             if let Some(peripheral) = stale_peripheral {
-                if let Err(err) = peripheral.disconnect().await {
-                    debug!("BLE resume recovery disconnect returned error: {err}");
-                } else {
-                    info!("BLE resume recovery disconnected stale peripheral");
+                match tokio::time::timeout(BLE_RESUME_DISCONNECT_TIMEOUT, peripheral.disconnect())
+                    .await
+                {
+                    Ok(Ok(())) => {
+                        info!("BLE resume recovery disconnected stale peripheral");
+                    }
+                    Ok(Err(err)) => {
+                        debug!("BLE resume recovery disconnect returned error: {err}");
+                    }
+                    Err(_) => {
+                        warn!(
+                            "BLE resume recovery disconnect timed out after {:?}",
+                            BLE_RESUME_DISCONNECT_TIMEOUT
+                        );
+                    }
                 }
             }
 
@@ -617,22 +662,36 @@ impl BleManager {
                 send_ble_button_event(&ble.app_handle, false);
             }
 
-            match ble.connect_by_address(&address).await {
-                Ok(()) => {
+            match tokio::time::timeout(
+                BLE_RECONNECT_ATTEMPT_TIMEOUT,
+                ble.connect_by_address(&address),
+            )
+            .await
+            {
+                Ok(Ok(())) => {
                     info!("BLE resume recovery reconnect succeeded");
                     ble.app_handle
                         .state::<Arc<crate::managers::transcription::TranscriptionManager>>()
                         .initiate_model_load();
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     warn!("BLE resume recovery reconnect failed: {err}");
-                    *ble.reconnect_task_active.lock().unwrap() = false;
+                    ble.finish_reconnect_task();
                     ble.schedule_auto_reconnect("resume recovery failure".to_string());
+                    return;
+                }
+                Err(_) => {
+                    warn!(
+                        "BLE resume recovery reconnect timed out after {:?}",
+                        BLE_RECONNECT_ATTEMPT_TIMEOUT
+                    );
+                    ble.finish_reconnect_task();
+                    ble.schedule_auto_reconnect("resume recovery timeout".to_string());
                     return;
                 }
             }
 
-            *ble.reconnect_task_active.lock().unwrap() = false;
+            ble.finish_reconnect_task();
         });
     }
 
@@ -740,7 +799,7 @@ impl BleManager {
 
     pub async fn disconnect(&self) -> Result<()> {
         *self.allow_auto_reconnect.lock().unwrap() = false;
-        *self.reconnect_task_active.lock().unwrap() = false;
+        self.finish_reconnect_task();
         *self.is_recording.lock().unwrap() = false;
         *self.device_button_active.lock().unwrap() = false;
         let peripheral = self.peripheral.lock().unwrap().take();
