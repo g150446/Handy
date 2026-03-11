@@ -306,6 +306,7 @@ async fn submit_prompt(
                     };
                     log::info!("Executed undo_last_input action from control mode");
                     emit_state_changed(app_handle, &snapshot);
+                    schedule_auto_exit(app_handle, snapshot.session_id);
                     return Ok(snapshot);
                 }
             }
@@ -331,6 +332,7 @@ async fn submit_prompt(
                     .unwrap_or(0)
             );
             emit_state_changed(app_handle, &snapshot);
+            schedule_auto_exit(app_handle, snapshot.session_id);
             Ok(snapshot)
         }
         Ok(None) => {
@@ -506,6 +508,27 @@ fn send_undo_via_enigo(app: &AppHandle) {
         }
     })
     .ok();
+}
+
+/// After displaying the response, wait 2 seconds then automatically exit control mode.
+/// Guards against firing if the user already exited manually (session_id check).
+fn schedule_auto_exit(app_handle: &AppHandle, session_id: u64) {
+    let app = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // Only deactivate if the session hasn't changed (user hasn't already exited)
+        let current_session = app
+            .state::<ControlModeState>()
+            .inner
+            .lock()
+            .unwrap()
+            .session_id;
+        if current_session == session_id {
+            log::info!("Auto-exiting control mode after response display (session {session_id})");
+            let _ = deactivate_mode(&app);
+            crate::overlay::show_normal_input_overlay(&app);
+        }
+    });
 }
 
 fn set_error_state(app_handle: &AppHandle, err: &str) -> Result<ControlStateSnapshot, String> {

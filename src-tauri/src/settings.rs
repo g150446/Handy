@@ -10,7 +10,7 @@ use tauri_plugin_store::StoreExt;
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
 pub const OPENROUTER_PROVIDER_ID: &str = "openrouter";
-pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "z-ai/glm-4.7-flash";
+pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "qwen/qwen3.5-9b";
 pub const OPENROUTER_API_KEY_ENV_VAR: &str = "OPENROUTER_API_KEY";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
