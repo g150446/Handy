@@ -6,6 +6,7 @@ use crate::managers::history::HistoryManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
     get_settings, resolve_post_process_api_key, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID,
+    OPENROUTER_PROVIDER_ID,
 };
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
@@ -262,6 +263,95 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     }
 }
 
+const TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT: &str = "あなたは音声認識テキストの誤変換修正ツールです。\n入力されたテキストの音声認識による誤りのみを修正してください。\n\n修正対象:\n- 同音異義語の誤変換（例:「機械」→「機会」など文脈に合わない語）\n- 助詞の欠落・誤認識（は/が/を/に の取り違え）\n- 数字・単位の誤認識\n- 明らかに文脈に合わない語の誤認識\n\n厳守事項:\n- 元の意味・語順・内容を一切変えない\n- 言い換え・要約・補足は行わない\n- 修正が不要な場合は入力テキストをそのまま返す\n\n必ず以下のJSON形式で返してください:\n{\"transcription\": \"修正後のテキスト\"}";
+
+async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<String> {
+    let settings = get_settings(app);
+
+    if !settings.transcription_correction_enabled {
+        return None;
+    }
+
+    let provider = match settings.post_process_provider(OPENROUTER_PROVIDER_ID).cloned() {
+        Some(p) => p,
+        None => {
+            warn!("[Correction] OpenRouter provider not found in settings");
+            return None;
+        }
+    };
+
+    let model = settings
+        .post_process_models
+        .get(OPENROUTER_PROVIDER_ID)
+        .cloned()
+        .unwrap_or_default();
+
+    if model.trim().is_empty() {
+        warn!("[Correction] Skipped: no OpenRouter model configured");
+        return None;
+    }
+
+    let api_key = resolve_post_process_api_key(&settings, OPENROUTER_PROVIDER_ID).value;
+    if api_key.trim().is_empty() {
+        warn!("[Correction] Skipped: no OpenRouter API key configured");
+        return None;
+    }
+
+    info!("[Correction] Calling OpenRouter (model: {}) ...", model);
+    info!("[Correction] Input:  \"{}\"", transcription);
+
+    let json_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "transcription": { "type": "string" }
+        },
+        "required": ["transcription"],
+        "additionalProperties": false
+    });
+
+    match crate::llm_client::send_chat_completion_with_schema(
+        &provider,
+        api_key,
+        &model,
+        transcription.to_string(),
+        Some(TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT.to_string()),
+        Some(json_schema),
+    )
+    .await
+    {
+        Ok(Some(content)) => {
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(json) => {
+                    if let Some(corrected) = json.get(TRANSCRIPTION_FIELD).and_then(|t| t.as_str()) {
+                        let result = strip_invisible_chars(corrected);
+                        // Return None if unchanged (no correction needed)
+                        if result == transcription {
+                            info!("[Correction] Output: \"{}\" (no change)", result);
+                            return None;
+                        }
+                        info!("[Correction] Output: \"{}\" ← CHANGED", result);
+                        return Some(result);
+                    }
+                    warn!("[Correction] Response missing 'transcription' field");
+                    None
+                }
+                Err(e) => {
+                    warn!("[Correction] Failed to parse JSON response: {}", e);
+                    None
+                }
+            }
+        }
+        Ok(None) => {
+            warn!("[Correction] Empty response from API");
+            None
+        }
+        Err(e) => {
+            warn!("[Correction] API call failed: {}. Using original text.", e);
+            None
+        }
+    }
+}
+
 async fn maybe_convert_chinese_variant(
     settings: &AppSettings,
     transcription: &str,
@@ -438,6 +528,25 @@ impl ShortcutAction for TranscribeAction {
                                 final_text = converted_text;
                             }
 
+                            // Apply auto transcription correction (normal mode, no post-process flag)
+                            // This runs independently of the post-process hotkey
+                            if !post_process {
+                                if settings.transcription_correction_enabled {
+                                    show_processing_overlay(&ah);
+                                }
+                                if let Some(corrected) =
+                                    correct_transcription(&ah, &final_text).await
+                                {
+                                    post_processed_text = Some(corrected.clone());
+                                    post_process_prompt =
+                                        Some(TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT.to_string());
+                                    final_text = corrected;
+                                } else if final_text != transcription {
+                                    // Chinese conversion was applied but no correction
+                                    post_processed_text = Some(final_text.clone());
+                                }
+                            }
+
                             // Then apply LLM post-processing if this is the post-process hotkey
                             // Uses final_text which may already have Chinese conversion applied
                             if post_process {
@@ -462,7 +571,7 @@ impl ShortcutAction for TranscribeAction {
                                         post_process_prompt = Some(prompt.prompt.clone());
                                     }
                                 }
-                            } else if final_text != transcription {
+                            } else if post_process && final_text != transcription {
                                 // Chinese conversion was applied but no LLM post-processing
                                 post_processed_text = Some(final_text.clone());
                             }

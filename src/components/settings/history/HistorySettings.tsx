@@ -203,7 +203,9 @@ export const HistorySettings: React.FC = () => {
                 key={entry.id}
                 entry={entry}
                 onToggleSaved={() => toggleSaved(entry.id)}
-                onCopyText={() => copyToClipboard(entry.transcription_text)}
+                onCopyText={() =>
+          copyToClipboard(entry.post_processed_text ?? entry.transcription_text)
+        }
                 getAudioUrl={getAudioUrl}
                 deleteAudio={deleteAudioEntry}
               />
@@ -299,9 +301,32 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
           </button>
         </div>
       </div>
-      <p className="italic text-text/90 text-sm pb-2 select-text cursor-text">
-        {entry.transcription_text}
-      </p>
+      {entry.post_processed_text ? (
+        <div className="space-y-2 pb-2">
+          <div>
+            <p className="text-xs font-medium text-text/40 uppercase tracking-wide mb-0.5">
+              {t("settings.history.originalLabel")}
+            </p>
+            <p className="italic text-text/60 text-sm select-text cursor-text">
+              {entry.transcription_text}
+            </p>
+          </div>
+          <div className="border-l-2 border-logo-primary/40 pl-2">
+            <p className="text-xs font-medium text-logo-primary/70 uppercase tracking-wide mb-0.5">
+              {entry.post_process_prompt?.includes("誤変換修正ツール")
+                ? t("settings.history.correctedByOpenRouter")
+                : t("settings.history.processedLabel")}
+            </p>
+            <p className="italic text-text/90 text-sm select-text cursor-text">
+              {entry.post_processed_text}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="italic text-text/90 text-sm pb-2 select-text cursor-text">
+          {entry.transcription_text}
+        </p>
+      )}
       <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
     </div>
   );

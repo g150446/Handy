@@ -400,6 +400,10 @@ pub struct AppSettings {
     /// BLE device address used when `audio_source == AudioSource::Ble`.
     #[serde(default)]
     pub ble_device_address: Option<String>,
+    /// When enabled, transcriptions are automatically corrected via OpenRouter
+    /// before pasting (uses the same provider/model settings as post-processing).
+    #[serde(default)]
+    pub transcription_correction_enabled: bool,
 }
 
 fn default_model() -> String {
@@ -826,6 +830,7 @@ pub fn get_default_settings() -> AppSettings {
         external_script_path: None,
         audio_source: AudioSource::default(),
         ble_device_address: None,
+        transcription_correction_enabled: false,
     }
 }
 

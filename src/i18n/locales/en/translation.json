@@ -469,7 +469,15 @@
       "save": "Save transcription",
       "unsave": "Remove from saved",
       "delete": "Delete entry",
-      "deleteError": "Failed to delete entry. Please try again."
+      "deleteError": "Failed to delete entry. Please try again.",
+      "originalLabel": "STT output",
+      "correctedByOpenRouter": "OpenRouter corrected",
+      "processedLabel": "AI processed"
+    },
+    "transcriptionCorrection": {
+      "groupTitle": "Auto Correction",
+      "label": "Transcription Auto Correction (OpenRouter)",
+      "description": "Automatically correct misrecognized words before pasting. Uses the OpenRouter API key and model configured above."
     },
     "debug": {
       "title": "Debug",

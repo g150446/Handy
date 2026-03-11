@@ -168,6 +168,14 @@ async changePostProcessEnabledSetting(enabled: boolean) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
+async changeTranscriptionCorrectionEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_transcription_correction_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeExperimentalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_experimental_enabled_setting", { enabled }) };
@@ -841,7 +849,12 @@ audio_source?: AudioSource;
 /**
  * BLE device address used when `audio_source == AudioSource::Ble`.
  */
-ble_device_address?: string | null }
+ble_device_address?: string | null; 
+/**
+ * When enabled, transcriptions are automatically corrected via OpenRouter
+ * before pasting (uses the same provider/model settings as post-processing).
+ */
+transcription_correction_enabled?: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AudioSource = 
 /**
