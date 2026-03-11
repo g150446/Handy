@@ -263,10 +263,45 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     }
 }
 
-const TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT: &str = "あなたは音声認識テキストの誤変換修正ツールです。\n入力されたテキストの音声認識による誤りのみを修正してください。\n\n修正対象:\n- 同音異義語の誤変換（例:「機械」→「機会」など文脈に合わない語）\n- 助詞の欠落・誤認識（は/が/を/に の取り違え）\n- 数字・単位の誤認識\n- 明らかに文脈に合わない語の誤認識\n\n厳守事項:\n- 元の意味・語順・内容を一切変えない\n- 言い換え・要約・補足は行わない\n- 修正が不要な場合は入力テキストをそのまま返す\n\n必ず以下のJSON形式で返してください:\n{\"transcription\": \"修正後のテキスト\"}";
+fn build_correction_prompt(custom_words: &[String]) -> String {
+    let base = "あなたは音声認識テキストの誤変換修正ツールです。\n\
+                入力されたテキストの音声認識による誤りのみを修正してください。\n\n\
+                修正対象:\n\
+                - 同音異義語の誤変換（例:「機械」→「機会」など文脈に合わない語）\n\
+                - 助詞の欠落・誤認識（は/が/を/に の取り違え）\n\
+                - 数字・単位の誤認識\n\
+                - 明らかに文脈に合わない語の誤認識\n\n\
+                厳守事項:\n\
+                - 元の意味・語順・内容を一切変えない\n\
+                - 言い換え・要約・補足は行わない\n\
+                - 修正が不要な場合は入力テキストをそのまま返す\n\n\
+                必ず以下のJSON形式で返してください:\n\
+                {\"transcription\": \"修正後のテキスト\"}";
+
+    if custom_words.is_empty() {
+        return base.to_string();
+    }
+
+    let word_list = custom_words
+        .iter()
+        .map(|w| format!("- {}", w))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "{}\n\n\
+         ## カスタムワード（優先表記）\n\
+         以下はユーザーが登録した固有名詞・専門用語です。\n\
+         音声認識テキストにこれらの語に近い発音の誤変換が含まれる場合は、\n\
+         下記の正しい表記に修正してください。\n\
+         それ以外の箇所は変更しないでください。\n\n\
+         {}",
+        base, word_list
+    )
+}
 
 const CORRECTION_PROVIDER_ID: &str = GROQ_PROVIDER_ID;
-const CORRECTION_DEFAULT_MODEL: &str = "openai/gpt-oss-20b";
+const CORRECTION_DEFAULT_MODEL: &str = "openai/gpt-oss-120b";
 
 /// Extract the `transcription` field from a JSON response.
 /// Falls back to scanning for `{...}` in case the model wraps the JSON in prose.
@@ -336,7 +371,7 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
         api_key,
         &model,
         transcription.to_string(),
-        Some(TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT.to_string()),
+        Some(build_correction_prompt(&settings.custom_words)),
         None, // local models: rely on prompt instruction instead of json_schema
     );
 
@@ -562,7 +597,7 @@ impl ShortcutAction for TranscribeAction {
                                 {
                                     post_processed_text = Some(corrected.clone());
                                     post_process_prompt =
-                                        Some(TRANSCRIPTION_CORRECTION_SYSTEM_PROMPT.to_string());
+                                        Some(build_correction_prompt(&settings.custom_words));
                                     final_text = corrected;
                                 } else if final_text != transcription {
                                     // Chinese conversion was applied but no correction
