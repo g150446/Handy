@@ -17,8 +17,8 @@
     "debug": "Debug",
     "about": "About"
   },
-  "conversation": {
-    "title": "OpenRouter Conversation",
+  "control": {
+    "title": "Control Mode",
     "subtitle": "Double-click the device button to toggle this mode on or off.",
     "status": {
       "inactive": "Inactive",
@@ -31,8 +31,8 @@
       "assistant": "Assistant"
     },
     "empty": {
-      "title": "Ready for conversation",
-      "description": "When conversation mode is active, messages you send here will go to the configured OpenRouter model."
+      "title": "Ready for control",
+      "description": "When control mode is active, voice commands will be interpreted as actions or conversation."
     },
     "errors": {
       "missingApiKey": "Set the OPENROUTER_API_KEY environment variable before starting a conversation.",

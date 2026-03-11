@@ -7,7 +7,7 @@ pub mod ble;
 pub mod cli;
 mod clipboard;
 mod commands;
-mod conversation;
+mod control;
 mod helpers;
 mod input;
 mod llm_client;
@@ -116,7 +116,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Initialize the BLE manager (shared between recording manager and commands).
     let ble_manager = Arc::new(crate::ble::BleManager::new(app_handle.clone()));
     app_handle.manage(ble_manager.clone());
-    conversation::initialize(app_handle);
+    control::initialize(app_handle);
 
     {
         let ble_manager = ble_manager.clone();
@@ -334,7 +334,7 @@ pub fn run(cli_args: CliArgs) {
         commands::get_app_dir_path,
         commands::get_app_settings,
         commands::get_default_settings,
-        conversation::get_conversation_mode,
+        control::get_control_mode,
         commands::get_log_dir_path,
         commands::set_log_level,
         commands::open_recordings_folder,
@@ -375,7 +375,7 @@ pub fn run(cli_args: CliArgs) {
         commands::audio::ble_disconnect,
         commands::audio::set_audio_source,
         commands::audio::get_audio_source,
-        conversation::send_conversation_message,
+        control::send_control_message,
         commands::transcription::set_model_unload_timeout,
         commands::transcription::get_model_load_status,
         commands::transcription::unload_model_manually,
@@ -547,8 +547,8 @@ pub fn run(cli_args: CliArgs) {
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                if window.label() == conversation::CONVERSATION_WINDOW_LABEL {
-                    let _ = conversation::deactivate_mode(&window.app_handle());
+                if window.label() == control::CONTROL_WINDOW_LABEL {
+                    let _ = control::deactivate_mode(&window.app_handle());
                     return;
                 }
 
@@ -585,7 +585,7 @@ pub fn run(cli_args: CliArgs) {
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
-                if !conversation::consume_reopen_suppression(app) {
+                if !control::consume_reopen_suppression(app) {
                     show_main_window(app);
                 }
             }

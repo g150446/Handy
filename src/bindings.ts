@@ -396,9 +396,9 @@ async getDefaultSettings() : Promise<Result<AppSettings, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getConversationMode() : Promise<Result<ConversationStateSnapshot, string>> {
+async getControlMode() : Promise<Result<ControlStateSnapshot, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_conversation_mode") };
+    return { status: "ok", data: await TAURI_INVOKE("get_control_mode") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -731,9 +731,9 @@ async setAudioSource(source: AudioSource) : Promise<Result<null, string>> {
 async getAudioSource() : Promise<AudioSource> {
     return await TAURI_INVOKE("get_audio_source");
 },
-async sendConversationMessage(prompt: string) : Promise<Result<ConversationStateSnapshot, string>> {
+async sendControlMessage(prompt: string) : Promise<Result<ControlStateSnapshot, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("send_conversation_message", { prompt }) };
+    return { status: "ok", data: await TAURI_INVOKE("send_control_message", { prompt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -860,8 +860,8 @@ export type BindingResponse = { success: boolean; binding: ShortcutBinding | nul
  */
 export type BleStatus = { connected: boolean; device_name: string | null; device_address: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
-export type ConversationStateSnapshot = { active: boolean; session_id: number; messages: ConversationTurn[]; is_sending: boolean; last_error: string | null; api_key_source: ApiKeySource }
-export type ConversationTurn = { role: string; content: string }
+export type ControlStateSnapshot = { active: boolean; session_id: number; messages: ControlTurn[]; is_sending: boolean; last_error: string | null; api_key_source: ApiKeySource; has_last_pasted: boolean }
+export type ControlTurn = { role: string; content: string }
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null }

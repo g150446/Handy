@@ -13,13 +13,14 @@ type ConversationTurn = {
   content: string;
 };
 
-type ConversationModeSnapshot = {
+type ControlModeSnapshot = {
   active: boolean;
   session_id: number;
   messages: ConversationTurn[];
   is_sending: boolean;
   last_error: string | null;
   api_key_source: "missing" | "settings" | "environment";
+  has_last_pasted: boolean;
 };
 
 const OPENROUTER_PROVIDER_ID = "openrouter";
@@ -36,7 +37,7 @@ export const ConversationWindow = () => {
   const { t, i18n } = useTranslation();
   const direction = getLanguageDirection(i18n.language);
   const { settings } = useSettings();
-  const [mode, setMode] = useState<ConversationModeSnapshot | null>(null);
+  const [mode, setMode] = useState<ControlModeSnapshot | null>(null);
   const lastSessionIdRef = useRef<number>(0);
   const prevMessageCountRef = useRef<number>(0);
   const lastAssistantRef = useRef<HTMLDivElement | null>(null);
@@ -48,7 +49,7 @@ export const ConversationWindow = () => {
 
   const refreshMode = async () => {
     try {
-      const snapshot = await invoke<ConversationModeSnapshot>("get_conversation_mode");
+      const snapshot = await invoke<ControlModeSnapshot>("get_control_mode");
       lastSessionIdRef.current = snapshot.session_id;
       setMode(snapshot);
     } catch (invokeError) {
@@ -64,8 +65,8 @@ export const ConversationWindow = () => {
     loadMode();
 
     const setupListener = async () => {
-      const unlisten = await listen<ConversationModeSnapshot>(
-        "conversation-mode-changed",
+      const unlisten = await listen<ControlModeSnapshot>(
+        "control-mode-changed",
         (event) => {
           const snapshot = event.payload;
           setMode(snapshot);
@@ -125,18 +126,18 @@ export const ConversationWindow = () => {
 
   const statusText = useMemo(() => {
     if (!mode?.active) {
-      return t("conversation.status.inactive");
+      return t("control.status.inactive");
     }
 
     if (mode.api_key_source === "missing") {
-      return t("conversation.status.missingApiKey");
+      return t("control.status.missingApiKey");
     }
 
     if (!model.trim()) {
-      return t("conversation.status.missingModel");
+      return t("control.status.missingModel");
     }
 
-    return t("conversation.status.active", { model });
+    return t("control.status.active", { model });
   }, [mode?.active, mode?.api_key_source, model, t]);
 
   // Index of last assistant message for ref assignment
@@ -152,7 +153,7 @@ export const ConversationWindow = () => {
     >
       <div className="border-b border-mid-gray/20 px-3 py-2 flex items-center justify-between gap-2">
         <h1 className="text-sm font-semibold truncate">
-          {t("conversation.title")}
+          {t("control.title")}
         </h1>
         <div className="shrink-0 rounded-full bg-mid-gray/10 px-2 py-0.5 text-xs font-medium">
           {statusText}
@@ -161,13 +162,13 @@ export const ConversationWindow = () => {
 
       {mode?.active && mode.api_key_source === "missing" && (
         <Alert variant="warning" className="mx-3 mt-2 rounded-lg text-xs py-2">
-          {t("conversation.errors.missingApiKey")}
+          {t("control.errors.missingApiKey")}
         </Alert>
       )}
 
       {mode?.active && mode.api_key_source !== "missing" && !model.trim() && (
         <Alert variant="warning" className="mx-3 mt-2 rounded-lg text-xs py-2">
-          {t("conversation.errors.missingModel")}
+          {t("control.errors.missingModel")}
         </Alert>
       )}
 
@@ -175,7 +176,7 @@ export const ConversationWindow = () => {
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center">
             <p className="text-xs text-mid-gray text-center">
-              {t("conversation.empty.title")}
+              {t("control.empty.title")}
             </p>
           </div>
         ) : (
@@ -203,8 +204,8 @@ export const ConversationWindow = () => {
                       {roleIcon(message.role)}
                       <span>
                         {isAssistant
-                          ? t("conversation.roles.assistant")
-                          : t("conversation.roles.user")}
+                          ? t("control.roles.assistant")
+                          : t("control.roles.user")}
                       </span>
                     </div>
                     <p className="whitespace-pre-wrap break-words text-xs leading-5">
@@ -220,7 +221,7 @@ export const ConversationWindow = () => {
                 <div className="rounded-xl border border-mid-gray/20 bg-mid-gray/10 px-3 py-2 text-xs text-mid-gray">
                   <span className="inline-flex items-center gap-1.5">
                     <LoaderCircle className="h-3 w-3 animate-spin" />
-                    {t("conversation.sending")}
+                    {t("control.sending")}
                   </span>
                 </div>
               </div>

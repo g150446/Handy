@@ -17,8 +17,8 @@
     "debug": "デバッグ",
     "about": "概要"
   },
-  "conversation": {
-    "title": "OpenRouter 対話",
+  "control": {
+    "title": "コントロールモード",
     "subtitle": "デバイスのダブルクリックでこのモードをオン / オフできます。",
     "status": {
       "inactive": "停止中",
@@ -31,8 +31,8 @@
       "assistant": "アシスタント"
     },
     "empty": {
-      "title": "対話の準備ができました",
-      "description": "対話モードが有効な間、ここで送信したメッセージは設定済みの OpenRouter モデルに送られます。"
+      "title": "コントロールの準備ができました",
+      "description": "コントロールモードが有効な間、音声コマンドはアクションまたは会話として解釈されます。"
     },
     "errors": {
       "missingApiKey": "対話を始める前に、OPENROUTER_API_KEY 環境変数を設定してください。",

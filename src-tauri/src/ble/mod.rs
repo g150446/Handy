@@ -447,21 +447,21 @@ impl BleManager {
 
                                 if recording_was_active {
                                     info!(
-                                        "BLE event: cancel recording and toggle conversation mode"
+                                        "BLE event: cancel recording and toggle control mode"
                                     );
                                     *discard_next_stop_event.lock().unwrap() = true;
                                     cancel_ble_recording(&app_handle);
                                 } else {
-                                    info!("BLE event: toggle conversation mode");
+                                    info!("BLE event: toggle control mode");
                                 }
-                                match crate::conversation::toggle_mode(&app_handle) {
+                                match crate::control::toggle_mode(&app_handle) {
                                     Ok(snapshot) => {
                                         if !snapshot.active {
                                             crate::overlay::show_normal_input_overlay(&app_handle);
                                         }
                                     }
                                     Err(err) => {
-                                        error!("Failed to toggle conversation mode from BLE: {err}");
+                                        error!("Failed to toggle control mode from BLE: {err}");
                                     }
                                 }
                             }

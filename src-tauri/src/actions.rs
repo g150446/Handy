@@ -467,15 +467,15 @@ impl ShortcutAction for TranscribeAction {
                                 post_processed_text = Some(final_text.clone());
                             }
 
-                            let conversation_mode_active =
-                                crate::conversation::get_mode_snapshot(&ah).active;
+                            let control_mode_active =
+                                crate::control::get_mode_snapshot(&ah).active;
                             info!(
-                                "Transcription routing decision: conversation_mode_active={}",
-                                conversation_mode_active
+                                "Transcription routing decision: control_mode_active={}",
+                                control_mode_active
                             );
-                            if conversation_mode_active {
+                            if control_mode_active {
                                 show_processing_overlay(&ah);
-                                match crate::conversation::submit_voice_prompt(&ah, final_text)
+                                match crate::control::submit_voice_prompt(&ah, final_text)
                                     .await
                                 {
                                     Ok(_) => {
@@ -484,7 +484,7 @@ impl ShortcutAction for TranscribeAction {
                                     }
                                     Err(err) => {
                                         error!(
-                                            "Failed to submit conversation voice prompt: {}",
+                                            "Failed to submit control voice prompt: {}",
                                             err
                                         );
                                         utils::hide_recording_overlay(&ah);
@@ -515,11 +515,18 @@ impl ShortcutAction for TranscribeAction {
                             let ah_clone = ah.clone();
                             let paste_time = Instant::now();
                             ah.run_on_main_thread(move || {
+                                let text_to_save = final_text.clone();
                                 match utils::paste(final_text, ah_clone.clone()) {
-                                    Ok(()) => debug!(
-                                        "Text pasted successfully in {:?}",
-                                        paste_time.elapsed()
-                                    ),
+                                    Ok(()) => {
+                                        debug!(
+                                            "Text pasted successfully in {:?}",
+                                            paste_time.elapsed()
+                                        );
+                                        crate::control::set_last_pasted_text(
+                                            &ah_clone,
+                                            text_to_save,
+                                        );
+                                    }
                                     Err(e) => error!("Failed to paste transcription: {}", e),
                                 }
                                 // Hide the overlay after transcription is complete

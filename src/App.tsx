@@ -187,7 +187,7 @@ function App() {
     return null;
   }
 
-  if (windowLabel === "conversation") {
+  if (windowLabel === "control") {
     return <ConversationWindow />;
   }
 
