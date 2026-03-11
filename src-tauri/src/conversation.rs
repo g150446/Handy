@@ -9,10 +9,10 @@ use tauri::{
 use crate::settings::{self, ApiKeySource, OPENROUTER_PROVIDER_ID};
 
 pub const CONVERSATION_WINDOW_LABEL: &str = "conversation";
-const CONVERSATION_WINDOW_WIDTH: f64 = 460.0;
-const CONVERSATION_WINDOW_HEIGHT: f64 = 560.0;
+const CONVERSATION_WINDOW_WIDTH: f64 = 230.0;
+const CONVERSATION_WINDOW_HEIGHT: f64 = 280.0;
 const CONVERSATION_WINDOW_RIGHT_OFFSET: f64 = 24.0;
-const CONVERSATION_WINDOW_BOTTOM_OFFSET: f64 = 24.0;
+const CONVERSATION_WINDOW_TOP_OFFSET: f64 = 24.0;
 
 #[derive(Default)]
 pub struct ConversationModeState {
@@ -301,7 +301,7 @@ fn ensure_window(app_handle: &AppHandle) -> Result<tauri::WebviewWindow, String>
     )
     .title("OpenRouter Conversation")
     .inner_size(CONVERSATION_WINDOW_WIDTH, CONVERSATION_WINDOW_HEIGHT)
-    .min_inner_size(380.0, 420.0)
+    .min_inner_size(190.0, 210.0)
     .resizable(true)
     .visible(false);
 
@@ -329,10 +329,7 @@ fn calculate_window_position(app_handle: &AppHandle) -> Option<(f64, f64)> {
 
     let x =
         work_area_x + work_area_width - CONVERSATION_WINDOW_WIDTH - CONVERSATION_WINDOW_RIGHT_OFFSET;
-    let y = work_area_y
-        + work_area_height
-        - CONVERSATION_WINDOW_HEIGHT
-        - CONVERSATION_WINDOW_BOTTOM_OFFSET;
+    let y = work_area_y + CONVERSATION_WINDOW_TOP_OFFSET;
 
     Some((x.max(work_area_x), y.max(work_area_y)))
 }
