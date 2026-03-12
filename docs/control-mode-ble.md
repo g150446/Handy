@@ -1,189 +1,228 @@
-# Control Mode + BLE Recording — Implementation Notes
+# Control Mode BLE修正メモとUSBシリアルテスト手順
 
-## Overview
+## 概要
 
-Control mode is a voice-driven assistant mode that:
-1. Activates via **double-click** on the BLE device (AtomEchoS3R)
-2. Immediately starts recording the user's voice
-3. On **single-click**, stops recording and submits the transcription to OpenRouter
-4. Displays the LLM response, then **automatically exits** control mode after 2 seconds
+Atom Echo S3R を BLE で `Handy` に接続した状態で、control mode を終了した直後の最初の single-click が効かない不具合を修正した。
+
+今回のデバッグでは、`Handy` 側の BLE イベント解釈と、`voice-bridge-ble` 側ファームウェアの実際の通知仕様にズレがあることが分かった。あわせて、USB シリアル経由で single-click / double-click をエミュレートできるようにし、実機再現を安定して行えるようにした。
 
 ---
 
-## Key Files
+## 症状
 
-| File | Role |
-|------|------|
-| `src-tauri/src/ble/mod.rs` | BLE event handler — manages all button events and recording state |
-| `src-tauri/src/control.rs` | Control mode state machine, LLM interaction, auto-exit timer |
-| `src-tauri/src/managers/audio.rs` | `AudioRecordingManager` — BLE recording start/stop paths |
+修正前は次のような症状があった。
 
----
-
-## BLE Event Protocol (AtomEchoS3R → Host)
-
-Device sends 2-byte notifications on the TX characteristic:
-
-| Byte 0 | Byte 1 | Meaning |
-|--------|--------|---------|
-| `AUDIO_SYNC_BYTE` | — | Audio PCM packet (16-bit LE, 16 kHz, mono) |
-| `EVENT_SYNC_BYTE` | `0x01` | Physical button pressed → start recording |
-| `EVENT_SYNC_BYTE` | `0x02` | Physical button released → stop recording |
-| `EVENT_SYNC_BYTE` | `0x03` | Double-click detected |
-
-Host → Device commands (written to RX characteristic):
-
-| Byte | Meaning |
-|------|---------|
-| `0x01` | Start streaming audio (app-initiated) |
-| `0x00` | Stop streaming audio (app-initiated) |
-
-**Important firmware behavior**: When the host sends `0x01` to start app-initiated streaming,
-the device enters "app-initiated mode" and does **not** send `0x02` events on button release.
-Physical button presses still generate `0x01` events in this mode.
+- control mode に入った直後、single-click していないのに録音がすぐ終わることがある
+- control mode 終了後、最初の single-click が無反応になる
+- control mode の window に transcription や Groq の返答が表示されないことがある
 
 ---
 
-## Control Mode Recording State Machine
+## 根本原因
 
-### Shared state in `BleRecordingManager`
+### 1. `0x01` / `0x02` を「物理ボタンの press / release」と思い込んでいた
 
+`Handy` 側は長い間、BLE の event を次のように解釈していた。
+
+- `0x01` = ボタン press
+- `0x02` = ボタン release
+- `0x03` = double-click
+
+しかし、実機と USB シリアルエミュレータで確認すると、control mode の app-initiated recording 中は事情が異なっていた。
+
+- `0x03` は control mode 切り替え
+- app が `0x01` を device に送って録音開始した直後、device は `recording_started ACK` として `0x01` を返す
+- control mode 中の最初の stop は、firmware 側の状態によっては `0x02` 単体で返る
+
+つまり control mode entry 直後の `0x01` は「ユーザーの stop click」ではなく、「device が app の start command を受け付けた通知」だった。
+
+この ACK を実クリックとして処理すると、control mode に入った直後に勝手に stop してしまう。
+
+### 2. control mode stop 時の BLE サンプル回収が遅れていた
+
+もうひとつの問題は `AudioRecordingManager::stop_recording()` 側にあった。
+
+修正前は app-initiated BLE stop のときに、
+
+1. 別の async task を spawn
+2. その task の中で `stop_recording_command().await`
+3. 呼び出し元は blocking timeout で待つ
+
+という形になっていた。
+
+このため、タイミングによっては transcription が先に `0 samples` で始まり、少し後になってから本当の BLE 音声サンプルが回収されていた。
+
+その結果、
+
+- control mode window に transcription が出ない
+- Groq の返答も出ない
+- 空文字のまま処理が進む
+
+という見え方になっていた。
+
+---
+
+## 修正内容
+
+### Handy 側
+
+主に以下を修正した。
+
+#### 1. control mode entry 直後の `recording_started ACK (0x01)` を無視
+
+`src-tauri/src/ble/mod.rs`
+
+- control mode に入って app が録音開始した直後の `0x01` を、ユーザー操作ではなく ACK として 1 回だけ無視するフラグを追加
+- これにより、control mode に入った瞬間に勝手に stop しなくなった
+
+#### 2. control mode 中の最初の stop を `0x02` 単体でも受理
+
+`src-tauri/src/ble/mod.rs`
+
+- control mode 中は、`device_button_active == false` でも、録音継続中の `0x02` を stop acknowledgment として扱うようにした
+- これにより、最初の single-click で確実に録音停止へ進めるようになった
+
+#### 3. BLE stop を nested spawn せず、その場で `await`
+
+`src-tauri/src/managers/audio.rs`
+
+- app-initiated BLE stop は `stop_recording_command().await` を直接待つように変更
+- サンプル回収完了前に transcription が始まる race を解消
+
+#### 4. control mode の返答表示を強化
+
+`src-tauri/src/control.rs`
+
+- Groq の plain-text reply を受けたとき、control window を再表示・再フォーカス
+- auto-exit の猶予を 2 秒から 4 秒に延長
+- 応答本文を `handy.log` に出力するようにした
+
+---
+
+## 修正後の期待動作
+
+修正後は次の流れになる。
+
+1. double-click で control mode に入る
+2. control mode 用録音が自動開始される
+3. この直後の `0x01` ACK は無視する
+4. ユーザーが single-click すると録音停止
+5. transcription 結果が control mode window に表示される
+6. Groq の返答が control mode window に表示される
+7. 数秒後に auto-exit
+8. auto-exit 後の最初の single-click で通常録音が始まる
+
+---
+
+## USBシリアルで single-click / double-click をエミュレートする方法
+
+### 前提
+
+- `voice-bridge-ble` 側の最新ファームウェアが Atom Echo S3R に書き込まれていること
+- USB 接続したデバイスのシリアルポートが見えていること
+- この Mac では `/dev/cu.usbmodem1101` を使用した
+
+今回の実装では、USB Serial/JTAG 経由で click を送れる。
+
+### 利用できるコマンド
+
+| コマンド | 意味 |
+|---|---|
+| `c` / `C` / `1` | single-click をエミュレート |
+| `d` / `D` / `2` | double-click をエミュレート |
+| `r` / `R` | 録音開始コマンド |
+| `s` / `S` | 録音停止コマンド |
+| `h` / `H` | ヘルプ表示 |
+
+### シリアルモニタ例
+
+```bash
+python3 - <<'PY'
+import serial
+
+ser = serial.Serial('/dev/cu.usbmodem1101', 115200, timeout=0.1)
+ser.write(b'h')
+print(ser.read(4096).decode('utf-8', errors='replace'))
+ser.close()
+PY
 ```
-recording_samples        Arc<Mutex<Vec<f32>>>   PCM buffer
-is_recording             Arc<Mutex<bool>>        Accumulate incoming packets?
-device_button_active     Arc<Mutex<bool>>        Was recording started by physical button?
-discard_next_stop_event  Arc<Mutex<bool>>        Ignore the next 0x02 event
-control_mode_capturing   Arc<Mutex<bool>>        Next 0x01 = user's stop command?
+
+### 手動テストの基本シーケンス
+
+#### control mode に入る
+
+```text
+d
 ```
 
-### Event flow for control mode
+#### control mode 中の録音を止める
 
+```text
+c
 ```
-User double-clicks
-        │
-        ▼
-   0x03 event received
-        │
-        ├─ recording_samples = []
-        ├─ is_recording = true
-        ├─ control_mode_capturing = false   ← not ready for user stop yet
-        ├─ discard_next_stop_event = true
-        ├─ send_ble_button_event(true)      → coordinator: Recording stage
-        └─ toggle_mode() → control window shown
-        │
-        ▼
-   0x01 event (device sends this as part of double-click gesture)
-        │  control_mode_capturing == false
-        ├─ device_button_active = true      ← device is streaming from physical press
-        └─ (no coordinator event — already in Recording stage)
-        │
-        ▼
-   0x02 event (button release from double-click)
-        │  discard_next_stop_event == true → DISCARD
-        ├─ discard_next_stop_event = false
-        └─ spawn resume_streaming_command() with 100ms delay
-                │
-                ├─ device_button_active = false  ← now app-initiated mode
-                ├─ is_recording = true
-                ├─ sends 0x01 to device → device resumes streaming
-                └─ control_mode_capturing = true  ← ready for user's stop press
-        │
-        ▼
-   User speaks …
-        │  Audio packets accumulate in recording_samples
-        │
-        ▼
-   User single-clicks (press)
-        │  0x01 event, control_mode_capturing == true
-        ├─ control_mode_capturing = false
-        ├─ device_button_active = true
-        ├─ discard_next_stop_event = true   ← discard the upcoming 0x02 release
-        └─ send_ble_button_event(false)     → coordinator: stop() → Processing stage
-                │
-                ▼
-           stop_recording()
-                ├─ take_device_button_samples()  (device_button_active=true → fast sync path)
-                │       ├─ is_recording = false
-                │       ├─ device_button_active = false
-                │       └─ returns all PCM samples
-                └─ transcription → submit_voice_prompt() → OpenRouter
-        │
-        ▼
-   0x02 event (release of stop press) → DISCARDED (discard_next_stop_event=true)
-        │
-        ▼
-   OpenRouter response received
-        ├─ displayed in control window
-        └─ schedule_auto_exit(session_id) → 2 s later → deactivate_mode()
+
+#### control mode 終了後に通常録音を始める
+
+```text
+c
+```
+
+#### 通常録音を止める
+
+```text
+c
 ```
 
 ---
 
-## Why `device_button_active` Matters for Stop
+## 実際に確認できた回帰テストシーケンス
 
-`AudioRecordingManager.stop_recording()` has two BLE stop paths:
+USB シリアルで次の順に送ると、control mode まわりの主要回帰を確認できる。
 
-```
-device_button_active == true   →  take_device_button_samples()
-                                   Fast, synchronous. Returns buffer immediately.
+1. `d`  
+   control mode に入る
 
-device_button_active == false  →  stop_recording_command() async
-                                   Sends 0x00 to device, waits 500 ms for in-flight packets.
-                                   Collected via mpsc channel with 5-second timeout.
-```
+2. `c`  
+   control mode 用録音を stop
 
-Always ensure `device_button_active = true` before triggering the stop in control mode,
-otherwise you risk a 5-second timeout with 0 samples returned.
+3. auto-exit を待つ
 
----
+4. `c`  
+   通常録音が start することを確認
 
-## Why Stop on Press (not Release)
+5. `c`  
+   通常録音が stop することを確認
 
-After `resume_streaming_command()` sends `0x01` to the device, the device enters
-app-initiated streaming mode. In this mode, physical button **releases do not generate
-`0x02` events**. Presses still generate `0x01` events. Therefore:
+このとき `handy.log` では概ね次の順になる。
 
-- Stopping on `0x02` (release) does not work in control mode → no event arrives.
-- Stopping on `0x01` (press) works reliably.
-
-The `control_mode_capturing` flag gates this: it is `false` during the double-click
-gesture (so the double-click's own `0x01` does not immediately stop recording) and
-becomes `true` only after the gesture completes and `resume_streaming_command` finishes.
-
----
-
-## LLM Response Handling (`control.rs`)
-
-### Action JSON (undo)
-
-If the LLM replies with `{"action":"undo_last_input"}`, `execute_undo_last_input()` is called:
-- Terminal apps (iTerm2, Terminal.app, etc.) → `Ctrl+U` (readline kill-line)
-- Other apps → `Cmd+Z` (standard undo)
-
-The app list is in `TERMINAL_APP_NAMES` in `control.rs`.
-
-### Markdown fence stripping
-
-Some models wrap JSON in ` ```json … ``` ` fences. `strip_markdown_code_fence()` in
-`control.rs` strips these before attempting `serde_json::from_str`.
-
-### Auto-exit
-
-After every successful LLM response (both action and text replies), `schedule_auto_exit()`
-is called. It waits 2 seconds and then calls `deactivate_mode()` — but only if
-`session_id` hasn't changed (user didn't already exit manually).
+- `BLE event: toggle control mode`
+- `BLE event: ignoring control-mode recording_started ACK`
+- `BLE event: control-mode stop acknowledged without press event`
+- `BLE stop_recording_command returned ... samples`
+- `Transcription result: ...`
+- `Received Groq response for control mode ...`
+- `Auto-exiting control mode ...`
+- `BLE event: device button pressed – start recording`
+- `BLE event: device button released – stop recording`
 
 ---
 
-## Normal BLE Recording (non-control mode)
+## 関連ファイル
 
-For reference, the normal push-to-talk flow is unaffected:
+### Handy
 
-```
-0x01 press  →  recording_samples=[], is_recording=true, device_button_active=true
-               send_ble_button_event(true)  → coordinator start
+- `src-tauri/src/ble/mod.rs`
+- `src-tauri/src/managers/audio.rs`
+- `src-tauri/src/control.rs`
+- `src-tauri/src/actions.rs`
 
-0x02 release →  device_button_active=true
-               send_ble_button_event(false)  → coordinator stop
-               take_device_button_samples()  → fast sync return
-```
+### voice-bridge-ble
+
+- `atom_echo_s3r/main.c`
+- `atom_echo_s3r/CMakeLists.txt`
+
+---
+
+## 補足
+
+`Handy` と `voice-bridge-ble` は別リポジトリとして扱うこと。修正や commit / push はそれぞれのリポジトリルートで別々に行う。

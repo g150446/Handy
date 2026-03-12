@@ -35,6 +35,11 @@ pub fn cancel_current_operation(app: &AppHandle) {
 
     // Notify coordinator so it can keep lifecycle state coherent.
     if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+        let next_epoch = coordinator.advance_processing_epoch();
+        info!(
+            "Cancellation advanced coordinator processing epoch to {} (recording_was_active={})",
+            next_epoch, recording_was_active
+        );
         coordinator.notify_cancel(recording_was_active);
     }
 

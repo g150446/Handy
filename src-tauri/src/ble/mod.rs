@@ -41,7 +41,10 @@ use futures_util::StreamExt;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager as TauriManager};
 use uuid::{uuid, Uuid};
@@ -101,15 +104,19 @@ pub struct BleManager {
     /// Set when a double-click cancels an in-progress BLE recording so the
     /// subsequent device stop event does not trigger transcription.
     discard_next_stop_event: Arc<Mutex<bool>>,
-    /// Set to true once the double-click gesture is fully committed (its 0x02
-    /// has been discarded and the device resumed streaming).  While true, the
-    /// next physical button press (0x01) is treated as a "stop control-mode
-    /// recording" command instead of a new start.
+    /// Set while control mode is actively recording and the next intentional
+    /// user click should stop that recording.
     control_mode_capturing: Arc<Mutex<bool>>,
+    /// The device emits event 0x01 both for a physical button press and for the
+    /// app-initiated "recording started" acknowledgement. When control mode
+    /// auto-starts recording, ignore that first ACK so we keep waiting for the
+    /// user's actual next single-click.
+    ignore_next_control_mode_start_ack: Arc<Mutex<bool>>,
     /// Disabled by explicit user disconnect so we do not immediately reconnect
     /// against the user's intent.
     allow_auto_reconnect: Arc<Mutex<bool>>,
     reconnect_task_started_at: Arc<Mutex<Option<Instant>>>,
+    stream_command_epoch: Arc<AtomicU64>,
 }
 
 impl BleManager {
@@ -123,8 +130,10 @@ impl BleManager {
             device_button_active: Arc::new(Mutex::new(false)),
             discard_next_stop_event: Arc::new(Mutex::new(false)),
             control_mode_capturing: Arc::new(Mutex::new(false)),
+            ignore_next_control_mode_start_ack: Arc::new(Mutex::new(false)),
             allow_auto_reconnect: Arc::new(Mutex::new(true)),
             reconnect_task_started_at: Arc::new(Mutex::new(None)),
+            stream_command_epoch: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -268,9 +277,9 @@ impl BleManager {
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
         central.start_scan(ScanFilter::default()).await?;
-        let matched =
-            self.find_matching_peripheral(&central, std::time::Duration::from_secs(scan_secs), None)
-                .await?;
+        let matched = self
+            .find_matching_peripheral(&central, std::time::Duration::from_secs(scan_secs), None)
+            .await?;
         central.stop_scan().await?;
 
         let device = matched.ok_or_else(|| anyhow::anyhow!("AtomEchoS3R not found during scan"))?;
@@ -291,11 +300,7 @@ impl BleManager {
 
         central.start_scan(ScanFilter::default()).await?;
         let matched = self
-            .find_matching_peripheral(
-                &central,
-                std::time::Duration::from_secs(8),
-                Some(address),
-            )
+            .find_matching_peripheral(&central, std::time::Duration::from_secs(8), Some(address))
             .await?;
 
         central.stop_scan().await?;
@@ -379,6 +384,7 @@ impl BleManager {
         let device_button_active = self.device_button_active.clone();
         let discard_next_stop_event = self.discard_next_stop_event.clone();
         let control_mode_capturing = self.control_mode_capturing.clone();
+        let ignore_next_control_mode_start_ack = self.ignore_next_control_mode_start_ack.clone();
         let app_handle = self.app_handle.clone();
 
         tauri::async_runtime::spawn(async move {
@@ -393,7 +399,37 @@ impl BleManager {
 
             debug!("BLE notification listener running");
 
-            while let Some(notif) = stream.next().await {
+            // Use a 10-second heartbeat timeout so the loop exits if btleplug's
+            // notification stream hangs after a CoreBluetooth event receiver death
+            // (the stream may never return None in that case).
+            let mut disconnect_reason = "notification stream closed";
+            loop {
+                let notif =
+                    match tokio::time::timeout(std::time::Duration::from_secs(10), stream.next())
+                        .await
+                    {
+                        Ok(Some(n)) => n,
+                        Ok(None) => break, // stream closed cleanly
+                        Err(_) => {
+                            // No notification for 10 s – verify peripheral is still up.
+                            let still_connected = tokio::time::timeout(
+                                std::time::Duration::from_secs(2),
+                                peripheral.is_connected(),
+                            )
+                            .await
+                            .ok()
+                            .and_then(|r| r.ok())
+                            .unwrap_or(false);
+
+                            if !still_connected {
+                                warn!("BLE: heartbeat detected peripheral disconnected");
+                                disconnect_reason = "heartbeat detected disconnect";
+                                break;
+                            }
+                            continue; // still connected, just quiet
+                        }
+                    };
+
                 if notif.uuid != TX_CHAR_UUID {
                     continue;
                 }
@@ -429,6 +465,13 @@ impl BleManager {
                                 if *is_recording.lock().unwrap()
                                     && crate::control::get_mode_snapshot(&app_handle).active
                                 {
+                                    if *ignore_next_control_mode_start_ack.lock().unwrap() {
+                                        *ignore_next_control_mode_start_ack.lock().unwrap() = false;
+                                        debug!(
+                                            "BLE event: ignoring control-mode recording_started ACK"
+                                        );
+                                        continue;
+                                    }
                                     if *control_mode_capturing.lock().unwrap() {
                                         // User's intentional stop press: stop on press (not release),
                                         // because the device may not send 0x02 in app-initiated mode.
@@ -438,17 +481,28 @@ impl BleManager {
                                         *discard_next_stop_event.lock().unwrap() = true;
                                         send_ble_button_event(&app_handle, false);
                                     } else {
-                                        // Double-click's second press: not yet ready for user stop.
-                                        info!("BLE event: press during control mode recording – will start capturing on discard");
+                                        // Double-click's second press received while still in setup phase.
+                                        // Arm capture mode immediately so the user can stop recording
+                                        // even if the 0x02 (button-release) event never arrives
+                                        // (e.g. button held down, BLE packet loss).
+                                        info!("BLE event: press during control mode recording – arming capture mode now");
                                         *device_button_active.lock().unwrap() = true;
+                                        *control_mode_capturing.lock().unwrap() = true;
                                     }
                                 } else {
+                                    let control_snapshot =
+                                        crate::control::get_mode_snapshot(&app_handle);
                                     info!("BLE event: device button pressed – start recording");
                                     // Start accumulating samples immediately.
                                     *recording_samples.lock().unwrap() = Vec::new();
                                     *is_recording.lock().unwrap() = true;
                                     *device_button_active.lock().unwrap() = true;
                                     *discard_next_stop_event.lock().unwrap() = false;
+                                    debug!(
+                                        "BLE press routed as normal recording start (control_active={}, session_id={})",
+                                        control_snapshot.active,
+                                        control_snapshot.session_id
+                                    );
 
                                     // Trigger the transcription pipeline (push-to-talk press).
                                     send_ble_button_event(&app_handle, true);
@@ -456,27 +510,69 @@ impl BleManager {
                             }
                             0x02 => {
                                 if *discard_next_stop_event.lock().unwrap() {
-                                    info!("BLE event: ignoring stop after double-click cancel");
+                                    let should_resume_streaming =
+                                        *control_mode_capturing.lock().unwrap();
+                                    info!(
+                                        "BLE event: ignoring discarded stop event (resume_streaming={should_resume_streaming})"
+                                    );
                                     *discard_next_stop_event.lock().unwrap() = false;
 
-                                    // In control mode the button release stops the device from
-                                    // streaming. Resume it so the user's speech is captured.
-                                    if crate::control::get_mode_snapshot(&app_handle).active
+                                    // Only the synthetic stop produced by the double-click setup
+                                    // should resume device streaming. The later stop-click release
+                                    // must stay ignored, otherwise the device starts recording
+                                    // again and the first post-exit single click becomes a stop.
+                                    let control_snapshot =
+                                        crate::control::get_mode_snapshot(&app_handle);
+                                    if should_resume_streaming
+                                        && control_snapshot.active
                                         && *is_recording.lock().unwrap()
                                     {
                                         let ble_clone = ble.clone();
                                         let capturing_clone = control_mode_capturing.clone();
+                                        let app_handle_clone = app_handle.clone();
+                                        let control_session_id = control_snapshot.session_id;
                                         tauri::async_runtime::spawn(async move {
-                                            tokio::time::sleep(
-                                                std::time::Duration::from_millis(100),
-                                            )
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                100,
+                                            ))
                                             .await;
+                                            let current_snapshot =
+                                                crate::control::get_mode_snapshot(
+                                                    &app_handle_clone,
+                                                );
+                                            if !current_snapshot.active
+                                                || current_snapshot.session_id != control_session_id
+                                            {
+                                                info!(
+                                                    "Skipping BLE resume after double-click because control mode changed (expected session {}, active={}, current session {})",
+                                                    control_session_id,
+                                                    current_snapshot.active,
+                                                    current_snapshot.session_id
+                                                );
+                                                return;
+                                            }
                                             if let Err(e) =
                                                 ble_clone.resume_streaming_command().await
                                             {
                                                 error!(
                                                     "Failed to resume BLE streaming after double-click: {e}"
                                                 );
+                                                return;
+                                            }
+                                            let current_snapshot =
+                                                crate::control::get_mode_snapshot(
+                                                    &app_handle_clone,
+                                                );
+                                            if !current_snapshot.active
+                                                || current_snapshot.session_id != control_session_id
+                                            {
+                                                info!(
+                                                    "Skipping control-mode capture arming because control mode changed during BLE resume (expected session {}, active={}, current session {})",
+                                                    control_session_id,
+                                                    current_snapshot.active,
+                                                    current_snapshot.session_id
+                                                );
+                                                return;
                                             }
                                             // Now the double-click gesture is fully committed;
                                             // the next physical 0x01 press is the user's stop command.
@@ -485,13 +581,31 @@ impl BleManager {
                                     }
                                     continue;
                                 }
+                                if crate::control::get_mode_snapshot(&app_handle).active
+                                    && *is_recording.lock().unwrap()
+                                    && *control_mode_capturing.lock().unwrap()
+                                {
+                                    info!(
+                                        "BLE event: control-mode stop acknowledged without press event"
+                                    );
+                                    *control_mode_capturing.lock().unwrap() = false;
+                                    send_ble_button_event(&app_handle, false);
+                                    continue;
+                                }
                                 // Only stop when a physical button press was registered
                                 // (device_button_active=true). This filters out spurious 0x02
                                 // events the device may emit in response to our 0x01 commands.
                                 if *device_button_active.lock().unwrap() {
+                                    let control_snapshot =
+                                        crate::control::get_mode_snapshot(&app_handle);
                                     info!("BLE event: device button released – stop recording");
                                     // is_recording stays true so in-flight packets are captured;
                                     // stop_recording_command() will clear it.
+                                    debug!(
+                                        "BLE release routed as recording stop (control_active={}, session_id={})",
+                                        control_snapshot.active,
+                                        control_snapshot.session_id
+                                    );
                                     send_ble_button_event(&app_handle, false);
                                 } else {
                                     debug!("BLE event: 0x02 ignored (no active button press)");
@@ -502,9 +616,7 @@ impl BleManager {
                                     || *device_button_active.lock().unwrap();
 
                                 if recording_was_active {
-                                    info!(
-                                        "BLE event: cancel recording and toggle control mode"
-                                    );
+                                    info!("BLE event: cancel recording and toggle control mode");
                                     *discard_next_stop_event.lock().unwrap() = true;
                                     cancel_ble_recording(&app_handle);
                                 } else {
@@ -516,15 +628,17 @@ impl BleManager {
                                             crate::overlay::show_normal_input_overlay(&app_handle);
                                         } else {
                                             // Auto-start app-initiated recording upon entering control mode.
-                                            // device_button_active stays false so start_recording_command
-                                            // sends 0x01 to the device (it is not yet streaming).
-                                            // Discard the 0x02 button-release that follows the double-click
-                                            // gesture so it doesn't immediately stop the recording.
+                                            // Ignore the immediate recording-started ACK (0x01) that the
+                                            // device emits in response to our start command. After that,
+                                            // wait for the next single-click and accept either a 0x01
+                                            // press or a direct 0x02 stop acknowledgement from firmware.
                                             info!("BLE: control mode active – auto-starting recording");
                                             *recording_samples.lock().unwrap() = Vec::new();
                                             *is_recording.lock().unwrap() = true;
-                                            *control_mode_capturing.lock().unwrap() = false;
-                                            *discard_next_stop_event.lock().unwrap() = true;
+                                            *control_mode_capturing.lock().unwrap() = true;
+                                            *discard_next_stop_event.lock().unwrap() = false;
+                                            *ignore_next_control_mode_start_ack.lock().unwrap() =
+                                                true;
                                             send_ble_button_event(&app_handle, true);
                                         }
                                     }
@@ -539,27 +653,65 @@ impl BleManager {
                         }
                     }
                     _ => {}
-                }
-            }
+                } // end `match data[1]`
+            } // end `loop`
 
-            // Stream closed → connection lost.
+            // Stream closed (or heartbeat disconnect) → connection lost.
             let was_recording = *is_recording.lock().unwrap();
             drop(recording_samples);
             drop(is_recording);
             drop(device_button_active);
             drop(discard_next_stop_event);
             drop(app_handle);
-            ble.handle_connection_loss("notification stream closed", was_recording);
+            ble.handle_connection_loss(disconnect_reason, was_recording);
         });
     }
 
-    fn handle_connection_loss(&self, reason: &str, was_recording: bool) {
-        let already_disconnected = matches!(*self.state.lock().unwrap(), ConnectionState::Disconnected);
-        *self.peripheral.lock().unwrap() = None;
-        *self.state.lock().unwrap() = ConnectionState::Disconnected;
+    fn reset_transient_ble_state(&self) {
         *self.is_recording.lock().unwrap() = false;
         *self.device_button_active.lock().unwrap() = false;
+        *self.control_mode_capturing.lock().unwrap() = false;
         *self.discard_next_stop_event.lock().unwrap() = false;
+        *self.ignore_next_control_mode_start_ack.lock().unwrap() = false;
+        *self.recording_samples.lock().unwrap() = Vec::new();
+    }
+
+    /// Reset all control-mode-related flags to their initial state.
+    /// Called when control mode deactivates to ensure a clean BLE state
+    /// for normal single-click recording.
+    pub fn reset_control_mode_state(&self) {
+        self.reset_transient_ble_state();
+    }
+
+    fn handle_interrupted_recording(&self, context: &str, was_recording: bool) {
+        if !was_recording {
+            return;
+        }
+
+        if crate::control::get_mode_snapshot(&self.app_handle).active {
+            info!("{context} during control mode – cancelling recording and deactivating");
+            cancel_ble_recording(&self.app_handle);
+            let _ = crate::control::deactivate_mode(&self.app_handle);
+            crate::overlay::show_normal_input_overlay(&self.app_handle);
+        } else {
+            send_ble_button_event(&self.app_handle, false);
+        }
+    }
+
+    pub fn next_stream_command_epoch(&self) -> u64 {
+        self.stream_command_epoch.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn is_current_stream_command_epoch(&self, epoch: u64) -> bool {
+        self.stream_command_epoch.load(Ordering::SeqCst) == epoch
+    }
+
+    fn handle_connection_loss(&self, reason: &str, was_recording: bool) {
+        let already_disconnected =
+            matches!(*self.state.lock().unwrap(), ConnectionState::Disconnected);
+        *self.peripheral.lock().unwrap() = None;
+        *self.state.lock().unwrap() = ConnectionState::Disconnected;
+        self.reset_transient_ble_state();
 
         if already_disconnected {
             debug!("BLE connection loss ignored because state was already disconnected ({reason})");
@@ -572,13 +724,14 @@ impl BleManager {
             device_name: None,
             device_address: None,
         };
-        if let Err(e) = self.app_handle.emit("ble-status-changed", &disconnected_status) {
+        if let Err(e) = self
+            .app_handle
+            .emit("ble-status-changed", &disconnected_status)
+        {
             error!("Failed to emit ble-status-changed: {e}");
         }
 
-        if was_recording {
-            send_ble_button_event(&self.app_handle, false);
-        }
+        self.handle_interrupted_recording("BLE disconnect", was_recording);
 
         self.schedule_auto_reconnect(reason.to_string());
     }
@@ -709,11 +862,10 @@ impl BleManager {
                 }
             }
 
-            let was_recording = *ble.is_recording.lock().unwrap() || *ble.device_button_active.lock().unwrap();
+            let was_recording =
+                *ble.is_recording.lock().unwrap() || *ble.device_button_active.lock().unwrap();
             *ble.state.lock().unwrap() = ConnectionState::Disconnected;
-            *ble.is_recording.lock().unwrap() = false;
-            *ble.device_button_active.lock().unwrap() = false;
-            *ble.discard_next_stop_event.lock().unwrap() = false;
+            ble.reset_transient_ble_state();
 
             if let Err(err) = ble.app_handle.emit(
                 "ble-status-changed",
@@ -726,9 +878,7 @@ impl BleManager {
                 error!("Failed to emit ble-status-changed during resume recovery: {err}");
             }
 
-            if was_recording {
-                send_ble_button_event(&ble.app_handle, false);
-            }
+            ble.handle_interrupted_recording("BLE resume recovery", was_recording);
 
             match tokio::time::timeout(
                 BLE_RECONNECT_ATTEMPT_TIMEOUT,
@@ -820,6 +970,15 @@ impl BleManager {
     /// Send start-recording command (`0x01`) to the device (app-initiated).
     /// If the physical device button already started recording, this is a no-op.
     pub async fn start_recording_command(&self) -> Result<()> {
+        let epoch = self.stream_command_epoch.load(Ordering::SeqCst);
+        self.start_recording_command_for_epoch(epoch).await
+    }
+
+    pub async fn start_recording_command_for_epoch(&self, epoch: u64) -> Result<()> {
+        if !self.is_current_stream_command_epoch(epoch) {
+            debug!("BLE: skipping stale start command for epoch {}", epoch);
+            return Ok(());
+        }
         // If the device button already initiated recording, don't reset the buffer.
         if *self.device_button_active.lock().unwrap() {
             debug!("BLE: start_recording_command skipped (device button active)");
@@ -843,11 +1002,54 @@ impl BleManager {
         *self.recording_samples.lock().unwrap() = Vec::new();
         *self.is_recording.lock().unwrap() = true;
 
+        if !self.is_current_stream_command_epoch(epoch) {
+            debug!(
+                "BLE: aborting start command before write because epoch {} is stale",
+                epoch
+            );
+            return Ok(());
+        }
+
         peripheral
             .write(&rx_char, &[0x01], WriteType::WithoutResponse)
             .await?;
 
         debug!("BLE: sent start recording (0x01)");
+        Ok(())
+    }
+
+    pub async fn abort_recording_command_for_epoch(&self, epoch: u64) -> Result<()> {
+        if !self.is_current_stream_command_epoch(epoch) {
+            debug!("BLE: skipping stale abort command for epoch {}", epoch);
+            return Ok(());
+        }
+
+        let peripheral = self
+            .peripheral
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Not connected to BLE device"))?;
+
+        let rx_char = peripheral
+            .characteristics()
+            .into_iter()
+            .find(|c| c.uuid == RX_CHAR_UUID)
+            .ok_or_else(|| anyhow::anyhow!("RX write characteristic not found"))?;
+
+        if !self.is_current_stream_command_epoch(epoch) {
+            debug!(
+                "BLE: abort command became stale before stop write for epoch {}",
+                epoch
+            );
+            return Ok(());
+        }
+
+        peripheral
+            .write(&rx_char, &[0x00], WriteType::WithoutResponse)
+            .await?;
+        self.reset_transient_ble_state();
+        debug!("BLE: sent abort recording (0x00) for epoch {}", epoch);
         Ok(())
     }
 
@@ -897,8 +1099,7 @@ impl BleManager {
     pub async fn disconnect(&self) -> Result<()> {
         *self.allow_auto_reconnect.lock().unwrap() = false;
         self.finish_reconnect_task();
-        *self.is_recording.lock().unwrap() = false;
-        *self.device_button_active.lock().unwrap() = false;
+        self.reset_transient_ble_state();
         let peripheral = self.peripheral.lock().unwrap().take();
         if let Some(p) = peripheral {
             let _ = p.disconnect().await;

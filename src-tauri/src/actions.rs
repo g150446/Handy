@@ -25,11 +25,14 @@ use tauri::Manager;
 
 /// Drop guard that notifies the [`TranscriptionCoordinator`] when the
 /// transcription pipeline finishes — whether it completes normally or panics.
-struct FinishGuard(AppHandle);
+struct FinishGuard {
+    app: AppHandle,
+    epoch: u64,
+}
 impl Drop for FinishGuard {
     fn drop(&mut self) {
-        if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
-            c.notify_processing_finished();
+        if let Some(c) = self.app.try_state::<TranscriptionCoordinator>() {
+            c.notify_processing_finished(self.epoch);
         }
     }
 }
@@ -335,10 +338,16 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
         return None;
     }
 
-    let provider = match settings.post_process_provider(CORRECTION_PROVIDER_ID).cloned() {
+    let provider = match settings
+        .post_process_provider(CORRECTION_PROVIDER_ID)
+        .cloned()
+    {
         Some(p) => p,
         None => {
-            warn!("[Correction] Local provider '{}' not found in settings", CORRECTION_PROVIDER_ID);
+            warn!(
+                "[Correction] Local provider '{}' not found in settings",
+                CORRECTION_PROVIDER_ID
+            );
             return None;
         }
     };
@@ -359,7 +368,10 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
 
     let api_key = resolve_post_process_api_key(&settings, CORRECTION_PROVIDER_ID).value;
     if api_key.trim().is_empty() {
-        warn!("[Correction] Skipped: no Groq API key configured for provider '{}'", CORRECTION_PROVIDER_ID);
+        warn!(
+            "[Correction] Skipped: no Groq API key configured for provider '{}'",
+            CORRECTION_PROVIDER_ID
+        );
         return None;
     }
 
@@ -380,9 +392,9 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
             warn!("[Correction] Timed out after 15s. Using original text.");
             return None;
         }
-        Ok(result) => match result {
-            Ok(Some(content)) => {
-                match extract_transcription_from_response(&content) {
+        Ok(result) => {
+            match result {
+                Ok(Some(content)) => match extract_transcription_from_response(&content) {
                     Some(corrected) => {
                         let result = strip_invisible_chars(&corrected);
                         if result == transcription {
@@ -396,17 +408,17 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
                         warn!("[Correction] Could not extract 'transcription' field from response: {}", content);
                         None
                     }
+                },
+                Ok(None) => {
+                    warn!("[Correction] Empty response from local model");
+                    None
+                }
+                Err(e) => {
+                    warn!("[Correction] API call failed: {}. Using original text.", e);
+                    None
                 }
             }
-            Ok(None) => {
-                warn!("[Correction] Empty response from local model");
-                None
-            }
-            Err(e) => {
-                warn!("[Correction] API call failed: {}. Using original text.", e);
-                None
-            }
-        },
+        }
     }
 }
 
@@ -547,9 +559,16 @@ impl ShortcutAction for TranscribeAction {
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
+        let processing_epoch = app
+            .try_state::<TranscriptionCoordinator>()
+            .map(|coordinator| coordinator.current_processing_epoch())
+            .unwrap_or(0);
 
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone());
+            let _guard = FinishGuard {
+                app: ah.clone(),
+                epoch: processing_epoch,
+            };
             let binding_id = binding_id.clone(); // Clone for the inner async task
             debug!(
                 "Starting async transcription task for binding: {}",
@@ -557,7 +576,7 @@ impl ShortcutAction for TranscribeAction {
             );
 
             let stop_recording_time = Instant::now();
-            if let Some(samples) = rm.stop_recording(&binding_id) {
+            if let Some(samples) = rm.stop_recording(&binding_id).await {
                 info!(
                     "Recording stopped: {} samples retrieved in {:?}",
                     samples.len(),
@@ -634,26 +653,20 @@ impl ShortcutAction for TranscribeAction {
                                 post_processed_text = Some(final_text.clone());
                             }
 
-                            let control_mode_active =
-                                crate::control::get_mode_snapshot(&ah).active;
+                            let control_mode_active = crate::control::get_mode_snapshot(&ah).active;
                             info!(
                                 "Transcription routing decision: control_mode_active={}",
                                 control_mode_active
                             );
                             if control_mode_active {
                                 show_processing_overlay(&ah);
-                                match crate::control::submit_voice_prompt(&ah, final_text)
-                                    .await
-                                {
+                                match crate::control::submit_voice_prompt(&ah, final_text).await {
                                     Ok(_) => {
                                         utils::hide_recording_overlay(&ah);
                                         change_tray_icon(&ah, TrayIconState::Idle);
                                     }
                                     Err(err) => {
-                                        error!(
-                                            "Failed to submit control voice prompt: {}",
-                                            err
-                                        );
+                                        error!("Failed to submit control voice prompt: {}", err);
                                         utils::hide_recording_overlay(&ah);
                                         change_tray_icon(&ah, TrayIconState::Idle);
                                     }

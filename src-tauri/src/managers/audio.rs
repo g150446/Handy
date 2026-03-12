@@ -352,8 +352,12 @@ impl AudioRecordingManager {
             if settings.audio_source == AudioSource::Ble {
                 // BLE path: fire-and-forget the start command.
                 let ble = self.ble_manager.clone();
+                let stream_command_epoch = ble.next_stream_command_epoch();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = ble.start_recording_command().await {
+                    if let Err(e) = ble
+                        .start_recording_command_for_epoch(stream_command_epoch)
+                        .await
+                    {
                         error!("BLE start recording command failed: {e}");
                     }
                 });
@@ -399,82 +403,72 @@ impl AudioRecordingManager {
         Ok(())
     }
 
-    pub fn stop_recording(&self, binding_id: &str) -> Option<Vec<f32>> {
-        let mut state = self.state.lock().unwrap();
+    pub async fn stop_recording(&self, binding_id: &str) -> Option<Vec<f32>> {
+        let should_stop = {
+            let mut state = self.state.lock().unwrap();
+            match &*state {
+                RecordingState::Recording { binding_id: active } if active == binding_id => {
+                    *state = RecordingState::Idle;
+                    true
+                }
+                _ => false,
+            }
+        };
 
-        match *state {
-            RecordingState::Recording {
-                binding_id: ref active,
-            } if active == binding_id => {
-                *state = RecordingState::Idle;
-                drop(state);
+        if !should_stop {
+            return None;
+        }
 
-                let settings = get_settings(&self.app_handle);
+        let settings = get_settings(&self.app_handle);
 
-                let audio_source = settings.audio_source;
-                info!("stop_recording: audio_source={:?}", audio_source);
-                let samples = if audio_source == AudioSource::Ble {
-                    // Device-button path: samples are already in memory → collect synchronously.
-                    // This avoids blocking a tokio worker thread with recv_timeout().
-                    if let Some(s) = self.ble_manager.take_device_button_samples() {
-                        s
-                    } else {
-                        // App-initiated BLE stop: send 0x00 via async and wait.
-                        let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
-                        let ble = self.ble_manager.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let samples = match ble.stop_recording_command().await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    error!("BLE stop recording failed: {e}");
-                                    Vec::new()
-                                }
-                            };
-                            info!(
-                                "BLE stop_recording_command returned {} samples",
-                                samples.len()
-                            );
-                            tx.send(samples).ok();
-                        });
-                        rx.recv_timeout(std::time::Duration::from_secs(5))
-                            .unwrap_or_default()
+        let audio_source = settings.audio_source;
+        info!("stop_recording: audio_source={:?}", audio_source);
+        let samples = if audio_source == AudioSource::Ble {
+            if let Some(s) = self.ble_manager.take_device_button_samples() {
+                s
+            } else {
+                match self.ble_manager.stop_recording_command().await {
+                    Ok(samples) => {
+                        info!(
+                            "BLE stop_recording_command returned {} samples",
+                            samples.len()
+                        );
+                        samples
                     }
-                } else {
-                    // Microphone path.
-                    if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                        match rec.stop() {
-                            Ok(buf) => buf,
-                            Err(e) => {
-                                error!("stop() failed: {e}");
-                                Vec::new()
-                            }
-                        }
-                    } else {
-                        error!("Recorder not available");
+                    Err(e) => {
+                        error!("BLE stop recording failed: {e}");
                         Vec::new()
                     }
-                };
-
-                *self.is_recording.lock().unwrap() = false;
-
-                // In on-demand mode turn the mic off again (microphone path only).
-                if settings.audio_source == AudioSource::Microphone
-                    && matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand)
-                {
-                    self.stop_microphone_stream();
-                }
-
-                // Pad if very short
-                let s_len = samples.len();
-                if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
-                    let mut padded = samples;
-                    padded.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
-                    Some(padded)
-                } else {
-                    Some(samples)
                 }
             }
-            _ => None,
+        } else if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            match rec.stop() {
+                Ok(buf) => buf,
+                Err(e) => {
+                    error!("stop() failed: {e}");
+                    Vec::new()
+                }
+            }
+        } else {
+            error!("Recorder not available");
+            Vec::new()
+        };
+
+        *self.is_recording.lock().unwrap() = false;
+
+        if settings.audio_source == AudioSource::Microphone
+            && matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand)
+        {
+            self.stop_microphone_stream();
+        }
+
+        let s_len = samples.len();
+        if s_len < WHISPER_SAMPLE_RATE && s_len > 0 {
+            let mut padded = samples;
+            padded.resize(WHISPER_SAMPLE_RATE * 5 / 4, 0.0);
+            Some(padded)
+        } else {
+            Some(samples)
         }
     }
     pub fn is_recording(&self) -> bool {
@@ -495,10 +489,16 @@ impl AudioRecordingManager {
             let settings = get_settings(&self.app_handle);
 
             if settings.audio_source == AudioSource::Ble {
-                // Send stop command (fire-and-forget; discard samples).
+                // Send immediate abort command and invalidate any older pending BLE commands.
                 let ble = self.ble_manager.clone();
+                let stream_command_epoch = ble.next_stream_command_epoch();
                 tauri::async_runtime::spawn(async move {
-                    let _ = ble.stop_recording_command().await;
+                    if let Err(e) = ble
+                        .abort_recording_command_for_epoch(stream_command_epoch)
+                        .await
+                    {
+                        error!("BLE abort recording command failed: {e}");
+                    }
                 });
             } else {
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {

@@ -155,6 +155,11 @@ fn set_mode(app_handle: &AppHandle, active: bool) -> Result<ControlStateSnapshot
             .set_activation_policy(tauri::ActivationPolicy::Regular)
             .map_err(|e| e.to_string())?;
     } else {
+        // Reset BLE control-mode state when deactivating
+        if let Some(ble) = app_handle.try_state::<std::sync::Arc<crate::ble::BleManager>>() {
+            ble.reset_control_mode_state();
+        }
+
         if let Some(window) = app_handle.get_webview_window(CONTROL_WINDOW_LABEL) {
             let _ = window.hide();
         }
@@ -194,16 +199,19 @@ fn set_mode(app_handle: &AppHandle, active: bool) -> Result<ControlStateSnapshot
 fn build_control_system_prompt(last_pasted: Option<&str>) -> String {
     let mut prompt = String::from(
         "You are a voice control assistant for a desktop app called Handy.\n\
-         You can either perform control actions OR respond conversationally.\n\n\
-         AVAILABLE ACTIONS:\n\
-         - Undo the last pasted text: respond ONLY with the JSON: {\"action\":\"undo_last_input\"}\n\
-         - Press the Enter key: respond ONLY with the JSON: {\"action\":\"send_enter_key\"}\n\n\
-         Use action JSON ONLY when the user clearly wants that specific action.\n\
+         Use the provided tools when the user wants to perform a control action.\n\
          For all other requests, respond normally as a helpful assistant.",
     );
     if let Some(text) = last_pasted {
-        let preview = if text.len() > 100 { &text[..100] } else { text };
-        prompt.push_str(&format!("\n\nThe user's last pasted text was: \"{}\"", preview));
+        let preview = if text.len() > 2000 {
+            &text[..2000]
+        } else {
+            text
+        };
+        prompt.push_str(&format!(
+            "\n\nThe user's last pasted text was: \"{}\"",
+            preview
+        ));
     }
     prompt
 }
@@ -224,8 +232,7 @@ async fn submit_prompt(
             .cloned()
             .ok_or_else(|| "Groq provider is not configured".to_string())?;
 
-        let resolved_api_key =
-            settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID);
+        let resolved_api_key = settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID);
         if resolved_api_key.value.trim().is_empty() {
             return Err("Groq API key is not configured".to_string());
         }
@@ -280,85 +287,140 @@ async fn submit_prompt(
 
     emit_state_changed(app_handle, &optimistic_snapshot);
 
-    log::info!("Sending control request to Groq (model={model})");
-    match crate::llm_client::send_chat_messages(&provider, api_key, &model, messages_for_request)
-        .await
+    let tools = vec![
+        (
+            "undo_last_input".to_string(),
+            "Undo (remove) the last pasted text. Use when user says undo, cancel, take back, 取り消して, 戻して etc.".to_string(),
+            None,
+        ),
+        (
+            "send_enter_key".to_string(),
+            "Press the Enter key in the target application.".to_string(),
+            None,
+        ),
+        (
+            "replace_input".to_string(),
+            "Replace the last pasted text with a corrected version. Use for typo fixes, IME errors, translation requests, or any modification of the previous text. The 'text' field must contain ONLY the final corrected text.".to_string(),
+            Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "The corrected replacement text" }
+                },
+                "required": ["text"]
+            })),
+        ),
+    ];
+
+    log::info!("Sending control request to Groq with function calling (model={model})");
+    match crate::llm_client::send_chat_with_tools(
+        &provider,
+        api_key,
+        &model,
+        messages_for_request,
+        tools,
+    )
+    .await
     {
-        Ok(Some(reply)) => {
-            // Check if the reply is an action JSON.
-            // Strip markdown code fences (```json ... ``` or ``` ... ```) before parsing.
-            let reply_trimmed = reply.trim();
-            let json_candidate = strip_markdown_code_fence(reply_trimmed);
-            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(json_candidate) {
-                if json_val.get("action").and_then(|a| a.as_str()) == Some("send_enter_key") {
-                    let enter_message = execute_enter_key_action(app_handle).await;
-
+        Ok(crate::llm_client::ControlToolCall::Action { name, args }) => match name.as_str() {
+            "send_enter_key" => {
+                let enter_message = execute_enter_key_action(app_handle).await;
+                let snapshot = {
+                    let state = app_handle.state::<ControlModeState>();
+                    let mut inner = state.inner.lock().unwrap();
+                    inner.messages.push(ControlTurn {
+                        role: "assistant".to_string(),
+                        content: enter_message,
+                    });
+                    inner.is_sending = false;
+                    inner.last_error = None;
+                    build_snapshot(app_handle, &inner)
+                };
+                log::info!("Executed send_enter_key action from control mode");
+                emit_state_changed(app_handle, &snapshot);
+                schedule_auto_exit(app_handle, snapshot.session_id);
+                Ok(snapshot)
+            }
+            "undo_last_input" => {
+                let undo_message = execute_undo_last_input(app_handle).await;
+                clear_last_pasted_text(app_handle);
+                let snapshot = {
+                    let state = app_handle.state::<ControlModeState>();
+                    let mut inner = state.inner.lock().unwrap();
+                    inner.messages.push(ControlTurn {
+                        role: "assistant".to_string(),
+                        content: undo_message,
+                    });
+                    inner.is_sending = false;
+                    inner.last_error = None;
+                    build_snapshot(app_handle, &inner)
+                };
+                log::info!("Executed undo_last_input action from control mode");
+                emit_state_changed(app_handle, &snapshot);
+                schedule_auto_exit(app_handle, snapshot.session_id);
+                Ok(snapshot)
+            }
+            "replace_input" => {
+                if let Some(new_text) = args.get("text").and_then(|t| t.as_str()) {
+                    let new_text = new_text.to_string();
+                    let replace_message = execute_replace_input(app_handle, new_text.clone()).await;
+                    set_last_pasted_text(app_handle, new_text);
                     let snapshot = {
                         let state = app_handle.state::<ControlModeState>();
                         let mut inner = state.inner.lock().unwrap();
                         inner.messages.push(ControlTurn {
                             role: "assistant".to_string(),
-                            content: enter_message,
+                            content: replace_message,
                         });
                         inner.is_sending = false;
                         inner.last_error = None;
                         build_snapshot(app_handle, &inner)
                     };
-                    log::info!("Executed send_enter_key action from control mode");
+                    log::info!("Executed replace_input action from control mode");
                     emit_state_changed(app_handle, &snapshot);
                     schedule_auto_exit(app_handle, snapshot.session_id);
-                    return Ok(snapshot);
-                }
-
-                if json_val.get("action").and_then(|a| a.as_str()) == Some("undo_last_input") {
-                    let undo_message = execute_undo_last_input(app_handle).await;
-                    clear_last_pasted_text(app_handle);
-
-                    let snapshot = {
-                        let state = app_handle.state::<ControlModeState>();
-                        let mut inner = state.inner.lock().unwrap();
-                        inner.messages.push(ControlTurn {
-                            role: "assistant".to_string(),
-                            content: undo_message,
-                        });
-                        inner.is_sending = false;
-                        inner.last_error = None;
-                        build_snapshot(app_handle, &inner)
-                    };
-                    log::info!("Executed undo_last_input action from control mode");
-                    emit_state_changed(app_handle, &snapshot);
-                    schedule_auto_exit(app_handle, snapshot.session_id);
-                    return Ok(snapshot);
+                    Ok(snapshot)
+                } else {
+                    set_error_state(app_handle, "replace_input called without 'text' argument")
                 }
             }
-
-            // Normal text response
-            let snapshot = {
-                let state = app_handle.state::<ControlModeState>();
-                let mut inner = state.inner.lock().unwrap();
-                inner.messages.push(ControlTurn {
-                    role: "assistant".to_string(),
-                    content: reply,
-                });
-                inner.is_sending = false;
-                inner.last_error = None;
-                build_snapshot(app_handle, &inner)
-            };
-            log::info!(
-                "Received Groq response for control mode (chars={})",
-                snapshot
-                    .messages
-                    .last()
-                    .map(|message| message.content.chars().count())
-                    .unwrap_or(0)
-            );
-            emit_state_changed(app_handle, &snapshot);
-            schedule_auto_exit(app_handle, snapshot.session_id);
-            Ok(snapshot)
-        }
-        Ok(None) => {
-            let err = "Groq returned an empty response".to_string();
-            set_error_state(app_handle, &err)
+            other => {
+                log::warn!("Unknown tool call from LLM: {other}");
+                set_error_state(app_handle, &format!("Unknown tool: {other}"))
+            }
+        },
+        Ok(crate::llm_client::ControlToolCall::TextReply(reply)) => {
+            if reply.is_empty() {
+                set_error_state(app_handle, "Groq returned an empty response")
+            } else {
+                let snapshot = {
+                    let state = app_handle.state::<ControlModeState>();
+                    let mut inner = state.inner.lock().unwrap();
+                    inner.messages.push(ControlTurn {
+                        role: "assistant".to_string(),
+                        content: reply,
+                    });
+                    inner.is_sending = false;
+                    inner.last_error = None;
+                    build_snapshot(app_handle, &inner)
+                };
+                show_control_window(app_handle);
+                log::info!(
+                    "Received Groq response for control mode (chars={}): {}",
+                    snapshot
+                        .messages
+                        .last()
+                        .map(|message| message.content.chars().count())
+                        .unwrap_or(0),
+                    snapshot
+                        .messages
+                        .last()
+                        .map(|message| message.content.as_str())
+                        .unwrap_or("")
+                );
+                emit_state_changed(app_handle, &snapshot);
+                schedule_auto_exit(app_handle, snapshot.session_id);
+                Ok(snapshot)
+            }
         }
         Err(err) => set_error_state(app_handle, &err),
     }
@@ -375,29 +437,6 @@ const TERMINAL_APP_NAMES: &[&str] = &[
     "Hyper",
     "Ghostty",
 ];
-
-/// Strip markdown code fences so `{"action":...}` can be parsed even when the
-/// LLM wraps it in ```json ... ``` or ``` ... ```.
-fn strip_markdown_code_fence(s: &str) -> &str {
-    let s = s.trim();
-    // Match an opening fence like ```json or just ```
-    let after_open = if let Some(rest) = s.strip_prefix("```") {
-        // skip optional language tag up to first newline
-        if let Some(pos) = rest.find('\n') {
-            rest[pos + 1..].trim_start()
-        } else {
-            return s;
-        }
-    } else {
-        return s;
-    };
-    // Strip trailing ```
-    if let Some(body) = after_open.strip_suffix("```") {
-        body.trim()
-    } else {
-        after_open.trim()
-    }
-}
 
 fn is_terminal_app(name: &str) -> bool {
     TERMINAL_APP_NAMES
@@ -508,6 +547,74 @@ async fn execute_undo_last_input(app: &AppHandle) -> String {
     "[直前の入力を取り消しました]".to_string()
 }
 
+async fn execute_replace_input(app: &AppHandle, new_text: String) -> String {
+    let prev_app = app
+        .state::<ControlModeState>()
+        .prev_frontmost_app
+        .lock()
+        .unwrap()
+        .clone();
+
+    if let Some(window) = app.get_webview_window(CONTROL_WINDOW_LABEL) {
+        let _ = window.hide();
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(ref app_name) = prev_app {
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+            let _ = app.clipboard().write_text(&new_text);
+
+            let (undo_keystroke, paste_keystroke) = if is_terminal_app(app_name) {
+                (
+                    r#"keystroke "u" using control down"#,
+                    r#"keystroke "v" using control down"#,
+                )
+            } else {
+                (
+                    r#"keystroke "z" using command down"#,
+                    r#"keystroke "v" using command down"#,
+                )
+            };
+
+            log::info!("Restoring focus to '{}' and replacing last input", app_name);
+
+            let script = format!(
+                "tell application \"{}\" to activate\ndelay 0.3\n\
+                 tell application \"System Events\" to {}\ndelay 0.3\n\
+                 tell application \"System Events\" to {}",
+                app_name, undo_keystroke, paste_keystroke
+            );
+            tauri::async_runtime::spawn_blocking(move || {
+                std::process::Command::new("osascript")
+                    .args(["-e", &script])
+                    .output()
+                    .ok();
+            })
+            .await
+            .ok();
+
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if let Some(window) = app.get_webview_window(CONTROL_WINDOW_LABEL) {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+
+            return "[入力を修正しました]".to_string();
+        } else {
+            log::warn!("No previous app recorded; cannot replace input");
+        }
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Some(window) = app.get_webview_window(CONTROL_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    "[入力の修正に失敗しました（対象アプリを特定できませんでした）]".to_string()
+}
+
 async fn execute_enter_key_action(app: &AppHandle) -> String {
     let prev_app = app
         .state::<ControlModeState>()
@@ -600,7 +707,7 @@ fn send_undo_via_enigo(app: &AppHandle) {
 fn schedule_auto_exit(app_handle: &AppHandle, session_id: u64) {
     let app = app_handle.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
         // Only deactivate if the session hasn't changed (user hasn't already exited)
         let current_session = app
             .state::<ControlModeState>()
@@ -630,8 +737,7 @@ fn set_error_state(app_handle: &AppHandle, err: &str) -> Result<ControlStateSnap
 
 fn build_snapshot(app_handle: &AppHandle, inner: &ControlRuntimeState) -> ControlStateSnapshot {
     let settings = settings::get_settings(app_handle);
-    let api_key_source =
-        settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID).source;
+    let api_key_source = settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID).source;
     let has_last_pasted = app_handle
         .state::<ControlModeState>()
         .last_pasted_text
@@ -671,6 +777,14 @@ fn ensure_window(app_handle: &AppHandle) -> Result<tauri::WebviewWindow, String>
     }
 
     builder.build().map_err(|e| e.to_string())
+}
+
+fn show_control_window(app_handle: &AppHandle) {
+    if let Ok(window) = ensure_window(app_handle) {
+        update_window_position(app_handle, &window);
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 fn update_window_position(app_handle: &AppHandle, window: &tauri::WebviewWindow) {
