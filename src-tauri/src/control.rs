@@ -568,7 +568,9 @@ async fn execute_replace_input(app: &AppHandle, new_text: String) -> String {
             let (undo_keystroke, paste_keystroke) = if is_terminal_app(app_name) {
                 (
                     r#"keystroke "u" using control down"#,
-                    r#"keystroke "v" using control down"#,
+                    // macOS terminal apps still use Cmd+V for paste; Ctrl+V only inserts
+                    // a literal control character and leaves the line empty after Ctrl+U.
+                    r#"keystroke "v" using command down"#,
                 )
             } else {
                 (
