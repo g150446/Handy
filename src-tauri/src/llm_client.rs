@@ -133,6 +133,7 @@ pub async fn send_chat_completion_with_schema(
     send_chat_messages_internal(provider, api_key, model, messages, json_schema).await
 }
 
+#[allow(dead_code)]
 pub async fn send_chat_messages(
     provider: &PostProcessProvider,
     api_key: String,
@@ -205,6 +206,142 @@ async fn send_chat_messages_internal(
         .choices
         .first()
         .and_then(|choice| choice.message.content.clone()))
+}
+
+// ── Function calling (tool use) ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct ToolFunctionDef {
+    name: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameters: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct ToolDef {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: ToolFunctionDef,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatWithToolsRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    tools: Vec<ToolDef>,
+    tool_choice: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolCallFunctionResponse {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolCallResponse {
+    function: ToolCallFunctionResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatMessageWithTools {
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCallResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatChoiceWithTools {
+    message: ChatMessageWithTools,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionWithToolsResponse {
+    choices: Vec<ChatChoiceWithTools>,
+}
+
+pub enum ControlToolCall {
+    Action {
+        name: String,
+        args: serde_json::Value,
+    },
+    TextReply(String),
+}
+
+pub async fn send_chat_with_tools(
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<(String, String)>,
+    tools: Vec<(String, String, Option<serde_json::Value>)>,
+) -> Result<ControlToolCall, String> {
+    let client = create_client(provider, &api_key)?;
+    let url = format!(
+        "{}/chat/completions",
+        provider.base_url.trim_end_matches('/')
+    );
+
+    let tools: Vec<ToolDef> = tools
+        .into_iter()
+        .map(|(name, description, parameters)| ToolDef {
+            tool_type: "function".to_string(),
+            function: ToolFunctionDef {
+                name,
+                description,
+                parameters,
+            },
+        })
+        .collect();
+
+    let messages: Vec<ChatMessage> = messages
+        .into_iter()
+        .map(|(role, content)| ChatMessage { role, content })
+        .collect();
+
+    let request = ChatWithToolsRequest {
+        model: model.to_string(),
+        messages,
+        tools,
+        tool_choice: "auto".to_string(),
+    };
+
+    let response = client
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("API error {status}: {body}"));
+    }
+
+    let parsed: ChatCompletionWithToolsResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    let choice = parsed
+        .choices
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Empty choices in response".to_string())?;
+
+    if let Some(tool_call) = choice.message.tool_calls.into_iter().next() {
+        let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
+            .unwrap_or(serde_json::Value::Object(Default::default()));
+        return Ok(ControlToolCall::Action {
+            name: tool_call.function.name,
+            args,
+        });
+    }
+
+    Ok(ControlToolCall::TextReply(
+        choice.message.content.unwrap_or_default(),
+    ))
 }
 
 /// Fetch available models from an OpenAI-compatible API

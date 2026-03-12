@@ -600,7 +600,6 @@ fn default_model_for_provider(provider_id: &str) -> String {
     String::new()
 }
 
-
 fn read_env_api_key(env_var: &str) -> Option<String> {
     if let Ok(value) = std::env::var(env_var) {
         let trimmed = value.trim();
@@ -611,10 +610,7 @@ fn read_env_api_key(env_var: &str) -> Option<String> {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("launchctl")
-            .args(["getenv", env_var])
-            .output()
-        {
+        if let Ok(output) = Command::new("launchctl").args(["getenv", env_var]).output() {
             if output.status.success() {
                 if let Ok(value) = String::from_utf8(output.stdout) {
                     let trimmed = value.trim();
