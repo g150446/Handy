@@ -433,6 +433,7 @@ const TERMINAL_APP_NAMES: &[&str] = &[
     "kitty",
     "Alacritty",
     "WezTerm",
+    "wezterm-gui", // WezTerm process name inside the bundle
     "Warp",
     "Hyper",
     "Ghostty",
@@ -633,11 +634,25 @@ async fn execute_enter_key_action(app: &AppHandle) -> String {
     {
         if let Some(ref app_name) = prev_app {
             log::info!("Restoring focus to '{}' and sending Return key", app_name);
-            let script = format!(
-                "tell application \"{}\" to activate\ndelay 0.3\n\
-                 tell application \"System Events\" to key code 36",
-                app_name
-            );
+            let script = if is_terminal_app(app_name) {
+                // Terminal process names (e.g. "wezterm-gui") don't match their bundle
+                // name, so `tell application X to activate` fails silently. Use System
+                // Events to focus by process name instead. Also use `keystroke return`
+                // rather than `key code 36` which GPU-based terminals may not receive.
+                format!(
+                    "tell application \"System Events\"\n\
+                     set frontmost of (first process whose name is \"{}\") to true\n\
+                     end tell\ndelay 0.3\n\
+                     tell application \"System Events\" to keystroke return",
+                    app_name
+                )
+            } else {
+                format!(
+                    "tell application \"{}\" to activate\ndelay 0.3\n\
+                     tell application \"System Events\" to key code 36",
+                    app_name
+                )
+            };
             tauri::async_runtime::spawn_blocking(move || {
                 std::process::Command::new("osascript")
                     .args(["-e", &script])
