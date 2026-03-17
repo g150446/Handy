@@ -76,12 +76,24 @@ If a new terminal emulator fails to receive the Enter key:
 
 The `is_terminal_app()` check is case-insensitive, so casing doesn't matter.
 
+## Same Fix Applied to Undo and Replace
+
+The same root causes applied to `execute_undo_last_input` and `execute_replace_input`:
+
+- Both used `tell application X to activate` with the process name → fails silently for WezTerm
+- After the fix, all three functions branch on `is_terminal_app()` and use:
+  ```applescript
+  tell application "System Events"
+      set frontmost of (first process whose name is "wezterm-gui") to true
+  end tell
+  ```
+
 ## Related Functions
 
 | Function | File | Notes |
 |---|---|---|
-| `get_frontmost_app_name()` | `control.rs:449` | Returns process name via System Events |
-| `is_terminal_app()` | `control.rs:442` | Case-insensitive lookup in `TERMINAL_APP_NAMES` |
-| `execute_enter_key_action()` | `control.rs:621` | Enter key — now terminal-aware |
-| `execute_undo_last_input()` | `control.rs:466` | Ctrl+U for terminals, Cmd+Z elsewhere |
-| `execute_replace_input()` | `control.rs:551` | Ctrl+V for terminals, Cmd+V elsewhere |
+| `get_frontmost_app_name()` | `control.rs` | Returns process name via System Events |
+| `is_terminal_app()` | `control.rs` | Case-insensitive lookup in `TERMINAL_APP_NAMES` |
+| `execute_enter_key_action()` | `control.rs` | Enter key — terminal-aware |
+| `execute_undo_last_input()` | `control.rs` | Ctrl+U for terminals, Cmd+Z elsewhere — terminal-aware |
+| `execute_replace_input()` | `control.rs` | Ctrl+U + Cmd+V for terminals, Cmd+Z + Cmd+V elsewhere — terminal-aware |

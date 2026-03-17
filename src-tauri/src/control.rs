@@ -196,7 +196,11 @@ fn set_mode(app_handle: &AppHandle, active: bool) -> Result<ControlStateSnapshot
     Ok(snapshot)
 }
 
-fn build_control_system_prompt(last_pasted: Option<&str>) -> String {
+fn build_control_system_prompt(
+    last_pasted: Option<&str>,
+    downloaded_models: &[&crate::managers::model::ModelInfo],
+    current_model: &str,
+) -> String {
     let mut prompt = String::from(
         "You are a voice control assistant for a desktop app called Handy.\n\
          Use the provided tools when the user wants to perform a control action.\n\
@@ -213,6 +217,27 @@ fn build_control_system_prompt(last_pasted: Option<&str>) -> String {
             preview
         ));
     }
+    if !downloaded_models.is_empty() {
+        prompt.push_str("\n\n## Transcription Models\nThe following speech recognition models are installed:\n");
+        for m in downloaded_models {
+            let langs = if m.supported_languages.is_empty() {
+                "multilingual".to_string()
+            } else {
+                m.supported_languages.join(", ")
+            };
+            prompt.push_str(&format!(
+                "- ID: `{}` | Name: {} | Languages: {}\n",
+                m.id, m.name, langs
+            ));
+        }
+        prompt.push_str(&format!("Current model: `{}`\n", current_model));
+        prompt.push_str(
+            "\nUse `select_transcription_model` when the user asks to:\n\
+             - switch / change / use a different model\n\
+             - use a specific language model (e.g. \"日本語のモデル\", \"English only\")\n\
+             - モデルを変える / 切り替える / 〜に変更して",
+        );
+    }
     prompt
 }
 
@@ -224,6 +249,19 @@ async fn submit_prompt(
     if prompt.is_empty() {
         return Err("Control prompt is empty".to_string());
     }
+
+    // Fetch downloaded models before locking state (get_available_models is sync)
+    let all_models = {
+        let model_manager = app_handle
+            .try_state::<std::sync::Arc<crate::managers::model::ModelManager>>();
+        model_manager
+            .map(|mm| mm.get_available_models())
+            .unwrap_or_default()
+    };
+    let downloaded_models: Vec<&crate::managers::model::ModelInfo> = all_models
+        .iter()
+        .filter(|m| m.is_downloaded && !m.is_downloading)
+        .collect();
 
     let (messages_for_request, provider, api_key, model, optimistic_snapshot) = {
         let settings = settings::get_settings(app_handle);
@@ -246,6 +284,8 @@ async fn submit_prompt(
             return Err("Groq model is not configured".to_string());
         }
 
+        let current_model = settings.selected_model.clone();
+
         let state = app_handle.state::<ControlModeState>();
         let mut inner = state.inner.lock().unwrap();
         if !inner.active {
@@ -267,7 +307,8 @@ async fn submit_prompt(
 
         // Build message list with system prompt prepended
         let last_pasted = get_last_pasted_text(app_handle);
-        let system_prompt = build_control_system_prompt(last_pasted.as_deref());
+        let system_prompt =
+            build_control_system_prompt(last_pasted.as_deref(), &downloaded_models, &current_model);
         let mut messages_for_request: Vec<(String, String)> =
             vec![("system".to_string(), system_prompt)];
         for turn in &inner.messages {
@@ -287,7 +328,7 @@ async fn submit_prompt(
 
     emit_state_changed(app_handle, &optimistic_snapshot);
 
-    let tools = vec![
+    let mut tools = vec![
         (
             "undo_last_input".to_string(),
             "Undo (remove) the last pasted text. Use when user says undo, cancel, take back, 取り消して, 戻して etc.".to_string(),
@@ -310,6 +351,28 @@ async fn submit_prompt(
             })),
         ),
     ];
+
+    if !downloaded_models.is_empty() {
+        let model_ids: Vec<serde_json::Value> = downloaded_models
+            .iter()
+            .map(|m| serde_json::Value::String(m.id.clone()))
+            .collect();
+        tools.push((
+            "select_transcription_model".to_string(),
+            "Switch the speech recognition model. Use when user asks to change or switch the transcription/STT model, or mentions a specific language model.".to_string(),
+            Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "model_id": {
+                        "type": "string",
+                        "description": "The model ID to activate",
+                        "enum": model_ids
+                    }
+                },
+                "required": ["model_id"]
+            })),
+        ));
+    }
 
     log::info!("Sending control request to Groq with function calling (model={model})");
     match crate::llm_client::send_chat_with_tools(
@@ -381,6 +444,33 @@ async fn submit_prompt(
                     Ok(snapshot)
                 } else {
                     set_error_state(app_handle, "replace_input called without 'text' argument")
+                }
+            }
+            "select_transcription_model" => {
+                if let Some(model_id) = args.get("model_id").and_then(|v| v.as_str()) {
+                    let model_id = model_id.to_string();
+                    let select_message =
+                        execute_select_model_action(app_handle, model_id).await;
+                    let snapshot = {
+                        let state = app_handle.state::<ControlModeState>();
+                        let mut inner = state.inner.lock().unwrap();
+                        inner.messages.push(ControlTurn {
+                            role: "assistant".to_string(),
+                            content: select_message,
+                        });
+                        inner.is_sending = false;
+                        inner.last_error = None;
+                        build_snapshot(app_handle, &inner)
+                    };
+                    log::info!("Executed select_transcription_model action from control mode");
+                    emit_state_changed(app_handle, &snapshot);
+                    schedule_auto_exit(app_handle, snapshot.session_id);
+                    Ok(snapshot)
+                } else {
+                    set_error_state(
+                        app_handle,
+                        "select_transcription_model: missing model_id",
+                    )
                 }
             }
             other => {
@@ -504,10 +594,24 @@ async fn execute_undo_last_input(app: &AppHandle) -> String {
                 }
             );
 
-            let script = format!(
-                "tell application \"{}\" to activate\ndelay 0.3\ntell application \"System Events\" to {}",
-                app_name, keystroke
-            );
+            let script = if is_terminal_app(app_name) {
+                // Terminal process names (e.g. "wezterm-gui") are not bundle names,
+                // so `tell application X to activate` fails silently.
+                // Use System Events to focus by process name instead.
+                format!(
+                    "tell application \"System Events\"\n\
+                     set frontmost of (first process whose name is \"{}\") to true\n\
+                     end tell\ndelay 0.3\n\
+                     tell application \"System Events\" to {}",
+                    app_name, keystroke
+                )
+            } else {
+                format!(
+                    "tell application \"{}\" to activate\ndelay 0.3\n\
+                     tell application \"System Events\" to {}",
+                    app_name, keystroke
+                )
+            };
             tauri::async_runtime::spawn_blocking(move || {
                 std::process::Command::new("osascript")
                     .args(["-e", &script])
@@ -582,12 +686,26 @@ async fn execute_replace_input(app: &AppHandle, new_text: String) -> String {
 
             log::info!("Restoring focus to '{}' and replacing last input", app_name);
 
-            let script = format!(
-                "tell application \"{}\" to activate\ndelay 0.3\n\
-                 tell application \"System Events\" to {}\ndelay 0.3\n\
-                 tell application \"System Events\" to {}",
-                app_name, undo_keystroke, paste_keystroke
-            );
+            let script = if is_terminal_app(app_name) {
+                // Terminal process names (e.g. "wezterm-gui") are not bundle names,
+                // so `tell application X to activate` fails silently.
+                // Use System Events to focus by process name instead.
+                format!(
+                    "tell application \"System Events\"\n\
+                     set frontmost of (first process whose name is \"{}\") to true\n\
+                     end tell\ndelay 0.3\n\
+                     tell application \"System Events\" to {}\ndelay 0.3\n\
+                     tell application \"System Events\" to {}",
+                    app_name, undo_keystroke, paste_keystroke
+                )
+            } else {
+                format!(
+                    "tell application \"{}\" to activate\ndelay 0.3\n\
+                     tell application \"System Events\" to {}\ndelay 0.3\n\
+                     tell application \"System Events\" to {}",
+                    app_name, undo_keystroke, paste_keystroke
+                )
+            };
             tauri::async_runtime::spawn_blocking(move || {
                 std::process::Command::new("osascript")
                     .args(["-e", &script])
@@ -717,6 +835,59 @@ fn send_undo_via_enigo(app: &AppHandle) {
         }
     })
     .ok();
+}
+
+async fn execute_select_model_action(app: &AppHandle, model_id: String) -> String {
+    let model_manager =
+        match app.try_state::<std::sync::Arc<crate::managers::model::ModelManager>>() {
+            Some(mm) => mm,
+            None => return "[エラー: モデルマネージャーが利用できません]".to_string(),
+        };
+
+    let all_models = model_manager.get_available_models();
+    let Some(model_info) = all_models
+        .iter()
+        .find(|m| m.id == model_id && m.is_downloaded)
+    else {
+        return format!("[エラー: モデル '{}' は利用できません]", model_id);
+    };
+    let display_name = model_info.name.clone();
+
+    let transcription_manager = match app
+        .try_state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>()
+    {
+        Some(tm) => tm,
+        None => return "[エラー: 文字起こしマネージャーが利用できません]".to_string(),
+    };
+
+    // Clone the Arc so it can be moved into spawn_blocking.
+    // load_model() is a heavy blocking call (disk I/O + GPU/Vulkan init on Windows).
+    // Calling it directly on a Tokio worker thread can starve the async runtime.
+    let tm_arc = transcription_manager.inner().clone();
+    let model_id_for_load = model_id.clone();
+
+    log::info!("Control mode: loading model '{model_id}' via spawn_blocking");
+    let load_result = tokio::task::spawn_blocking(move || tm_arc.load_model(&model_id_for_load))
+        .await;
+
+    match load_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            log::error!("Control mode: load_model failed for '{model_id}': {e}");
+            return format!("[エラー: モデルの読み込みに失敗しました: {}]", e);
+        }
+        Err(e) => {
+            log::error!("Control mode: load_model task panicked for '{model_id}': {e}");
+            return format!("[エラー: モデル読み込みスレッドがパニックしました: {}]", e);
+        }
+    }
+
+    let mut settings = crate::settings::get_settings(app);
+    settings.selected_model = model_id.clone();
+    crate::settings::write_settings(app, settings);
+
+    log::info!("Control mode switched transcription model to '{model_id}'");
+    format!("[モデルを '{}' に切り替えました]", display_name)
 }
 
 /// After displaying the response, wait 2 seconds then automatically exit control mode.
