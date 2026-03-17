@@ -217,6 +217,76 @@ bun tauri dev
 
 For detailed build instructions including platform-specific requirements, see [BUILD.md](BUILD.md).
 
+## Post-processing & Auto Transcription Correction
+
+Handy has two ways to refine transcribed text with an LLM after speech recognition:
+
+### Auto Transcription Correction
+
+When enabled in **Settings → Post-processing → Auto Correction**, Handy automatically sends every transcription to Groq to fix speech-recognition conversion errors before pasting — no extra hotkey needed.
+
+**What it fixes (replacement only — nothing is added or removed):**
+
+- Homophone misrecognition: e.g. 「機会」→「機械」when the context is technical
+- Particle misrecognition: e.g. 「は」→「が」(substitution only, never insertion)
+- Number/unit misrecognition
+- Kanji/English word errors judged from the full sentence context
+
+**What it never changes:** word order, sentence structure, expressions, grammar, or content.
+When in doubt, the corrected text is returned unchanged.
+
+**Requirements:** A Groq API key configured in **Settings → Post-processing**.
+
+**Custom Words:** Add domain-specific terms (proper nouns, technical jargon) in **Settings → Post-processing → Custom Words**. These are used as replacement candidates when a phonetically similar error is detected.
+
+### LLM Post-processing
+
+Triggered by a separate configurable hotkey (`--toggle-post-process`), LLM post-processing runs a fully customizable prompt against the transcription. Use it for translation, reformatting, summarisation, or any other transformation.
+
+**Setup:** Settings → Post-processing → select a provider and configure a prompt with `${output}` as the placeholder for the transcription text.
+
+---
+
+## Control Mode (Voice Desktop Control)
+
+Control Mode lets you control your desktop by voice using an LLM (Groq). Once active, you can issue commands and Handy will execute them in the application you were using before.
+
+### Activation
+
+Control Mode is activated via a connected BLE device (double-click). The control window appears in the top-right corner of your screen.
+
+### Available Commands
+
+| Command | Example utterances |
+|---|---|
+| Undo last input | "取り消して", "undo", "cancel that" |
+| Send Enter key | "エンターを押して", "press enter", "submit" |
+| Replace last text | "英語に直して", "fix the typo", "translate to English" |
+| **Switch STT model** | "Whisperに切り替えて", "日本語のモデルにして", "switch to Parakeet" |
+
+### Switching the Transcription Model by Voice
+
+Handy can switch its speech recognition model on the fly via a voice command. Only models that are already downloaded appear as options—the LLM will pick the best match from your installed models.
+
+**Examples:**
+
+```
+"Whisperに切り替えて"
+"日本語のモデルにして"
+"switch to the English-only model"
+"change model to Parakeet"
+```
+
+The switch takes effect immediately. The new model is persisted to settings so it survives app restarts.
+
+### Requirements
+
+- A Groq API key configured in Settings → Post-processing
+- At least one model downloaded (Settings → Models)
+- For model switching: two or more downloaded models
+
+---
+
 ## Architecture
 
 Handy is built as a Tauri application combining:
