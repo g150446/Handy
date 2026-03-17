@@ -93,6 +93,11 @@ enum ConnectionState {
 pub struct BleManager {
     app_handle: tauri::AppHandle,
     peripheral: Arc<Mutex<Option<Peripheral>>>,
+    /// The BLE adapter used for the current connection.
+    /// Kept alive for the lifetime of the connection so btleplug's CoreBluetooth
+    /// notification channel does not break when the adapter would otherwise be
+    /// dropped at the end of `connect_by_address()` / `connect_first()`.
+    adapter: Arc<Mutex<Option<Adapter>>>,
     state: Arc<Mutex<ConnectionState>>,
     /// Samples accumulated during the current recording.
     recording_samples: Arc<Mutex<Vec<f32>>>,
@@ -124,6 +129,7 @@ impl BleManager {
         Self {
             app_handle,
             peripheral: Arc::new(Mutex::new(None)),
+            adapter: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
             recording_samples: Arc::new(Mutex::new(Vec::new())),
             is_recording: Arc::new(Mutex::new(false)),
@@ -284,7 +290,7 @@ impl BleManager {
 
         let device = matched.ok_or_else(|| anyhow::anyhow!("AtomEchoS3R not found during scan"))?;
 
-        self.do_connect(device).await
+        self.do_connect(device, central).await
     }
 
     /// Connect to a specific device by its PeripheralId string.
@@ -325,10 +331,10 @@ impl BleManager {
 
         let device = matched.ok_or_else(|| anyhow::anyhow!("Device not found: {}", address))?;
 
-        self.do_connect(device).await
+        self.do_connect(device, central).await
     }
 
-    async fn do_connect(&self, device: Peripheral) -> Result<()> {
+    async fn do_connect(&self, device: Peripheral, adapter: Adapter) -> Result<()> {
         device.connect().await?;
         device.discover_services().await?;
 
@@ -352,6 +358,12 @@ impl BleManager {
 
         let listener_device = device.clone();
         *self.peripheral.lock().unwrap() = Some(device);
+        // Store the adapter so btleplug's CoreBluetooth notification channel stays
+        // alive for the lifetime of this connection.  Without this the adapter is
+        // dropped when connect_by_address() / connect_first() returns, which can
+        // corrupt the internal btleplug event pipeline and cause a panic in the
+        // notification listener task.
+        *self.adapter.lock().unwrap() = Some(adapter);
         *self.state.lock().unwrap() = ConnectionState::Connected {
             device_name: device_name.clone(),
             device_address: device_address.clone(),
@@ -710,6 +722,7 @@ impl BleManager {
         let already_disconnected =
             matches!(*self.state.lock().unwrap(), ConnectionState::Disconnected);
         *self.peripheral.lock().unwrap() = None;
+        *self.adapter.lock().unwrap() = None;
         *self.state.lock().unwrap() = ConnectionState::Disconnected;
         self.reset_transient_ble_state();
 
@@ -843,6 +856,7 @@ impl BleManager {
             );
 
             let stale_peripheral = ble.peripheral.lock().unwrap().take();
+            *ble.adapter.lock().unwrap() = None;
             if let Some(peripheral) = stale_peripheral {
                 match tokio::time::timeout(BLE_RESUME_DISCONNECT_TIMEOUT, peripheral.disconnect())
                     .await
