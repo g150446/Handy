@@ -116,6 +116,7 @@
     "extractingGeneric": "Rozpakowywanie...",
     "downloading": "Pobieranie {{percentage}}%",
     "downloadingMultiple": "Pobieranie {{count}} modeli...",
+    "downloadingGeneric": "Pobieranie...",
     "modelReady": "Model gotowy",
     "loading": "Wczytywanie {{modelName}}...",
     "loadingGeneric": "Wczytywanie...",

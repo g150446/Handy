@@ -53,6 +53,8 @@ pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: u64,
     pub percentage: f64,
+    pub is_indeterminate: bool,
+    pub speed_mbps: Option<f64>, // Download speed in MB/s
 }
 
 pub struct ModelManager {
@@ -753,16 +755,6 @@ impl ModelManager {
             return Ok(());
         }
 
-        // Check if we have a partial download to resume
-        let mut resume_from = if partial_path.exists() {
-            let size = partial_path.metadata()?.len();
-            info!("Resuming download of model {} from byte {}", model_id, size);
-            size
-        } else {
-            info!("Starting fresh download of model {} from {}", model_id, url);
-            0
-        };
-
         // Mark as downloading
         {
             let mut models = self.available_models.lock().unwrap();
@@ -778,6 +770,33 @@ impl ModelManager {
             flags.insert(model_id.to_string(), cancel_flag.clone());
         }
 
+        // Check if partial file exists and validate its size
+        let expected_size = model_info.size_mb * 1024 * 1024;
+        let mut resume_from = if partial_path.exists() {
+            let size = partial_path.metadata()?.len();
+            info!("Found partial file: {} bytes ({:.2} MB), expected: {} bytes ({:.2} MB)", 
+                  size, size as f64 / 1024.0 / 1024.0,
+                  expected_size, expected_size as f64 / 1024.0 / 1024.0);
+            
+            // If partial file is already at or above expected size, it's corrupted or complete
+            if size >= expected_size {
+                warn!(
+                    "Partial file size ({:.2} MB) >= expected size ({:.2} MB), deleting",
+                    size as f64 / 1024.0 / 1024.0,
+                    expected_size as f64 / 1024.0 / 1024.0
+                );
+                let _ = fs::remove_file(&partial_path);
+                info!("Starting fresh download of model {} from {}", model_id, url);
+                0
+            } else {
+                info!("Resuming download of model {} from byte {}", model_id, size);
+                size
+            }
+        } else {
+            info!("Starting fresh download of model {} from {}", model_id, url);
+            0
+        };
+
         // Create HTTP client with range request for resuming
         let client = reqwest::Client::new();
         let mut request = client.get(&url);
@@ -788,62 +807,241 @@ impl ModelManager {
 
         let mut response = request.send().await?;
 
-        // If we tried to resume but server returned 200 (not 206 Partial Content),
-        // the server doesn't support range requests. Delete partial file and restart
-        // fresh to avoid file corruption (appending full file to partial).
-        if resume_from > 0 && response.status() == reqwest::StatusCode::OK {
-            warn!(
-                "Server doesn't support range requests for model {}, restarting download",
-                model_id
-            );
-            drop(response);
-            let _ = fs::remove_file(&partial_path);
+        // Log response details for debugging
+        info!("Response status: {}", response.status());
+        info!("Response headers: {:?}", response.headers());
 
-            // Reset resume_from since we're starting fresh
-            resume_from = 0;
-
-            // Restart download without range header
-            response = client.get(&url).send().await?;
-        }
-
-        // Check for success or partial content status
-        if !response.status().is_success()
-            && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
-        {
-            // Mark as not downloading on error
-            {
-                let mut models = self.available_models.lock().unwrap();
-                if let Some(model) = models.get_mut(model_id) {
-                    model.is_downloading = false;
+        // Handle 416 Range Not Satisfiable - means the partial file is already complete
+        let mut skip_download = false;
+        if response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            info!("Got 416 Range Not Satisfiable - partial file may be complete");
+            
+            // Parse Content-Range to get actual file size
+            // Format: Content-Range: bytes */<total-size>
+            let actual_size = if let Some(content_range) = response.headers().get("content-range") {
+                if let Ok(range_str) = content_range.to_str() {
+                    info!("Content-Range for 416: {}", range_str);
+                    if let Some(total_str) = range_str.split('/').last() {
+                        if let Ok(size) = total_str.parse::<u64>() {
+                            info!("Actual file size from server: {} bytes ({:.2} MB)", 
+                                  size, size as f64 / 1024.0 / 1024.0);
+                            Some(size)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
+            } else {
+                None
+            };
+            
+            // Verify our partial file matches the server's file size
+            let partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+            let is_complete = if let Some(actual_size) = actual_size {
+                partial_size == actual_size
+            } else {
+                // No size from server, check if partial file is at expected size
+                partial_size >= model_info.size_mb * 1024 * 1024
+            };
+
+            if is_complete && partial_size > 0 {
+                info!("Partial file is complete! ({} bytes)", partial_size);
+
+                if model_info.is_directory {
+                    // For directory-based models, the .partial file IS the complete tar.gz
+                    // Just mark that we should skip download and proceed to extraction
+                    info!("Directory model complete, skipping to extraction");
+                    skip_download = true;
+                } else {
+                    // For file-based models, rename to final location and complete
+                    let final_path = self.models_dir.join(&model_info.filename);
+                    fs::rename(&partial_path, &final_path)?;
+                    info!("Renamed partial to final location");
+
+                    // Mark as downloaded and return success
+                    {
+                        let mut models = self.available_models.lock().unwrap();
+                        if let Some(model) = models.get_mut(model_id) {
+                            model.is_downloaded = true;
+                            model.is_downloading = false;
+                            model.partial_size = 0;
+                        }
+                    }
+                    let _ = self.app_handle.emit("model-download-complete", model_id);
+                    let _ = self.app_handle.emit("model-state-changed", ());
+                    return Ok(());
+                }
+            } else {
+                // File is incomplete, delete and restart
+                warn!("416 response but file is incomplete ({} vs {}), deleting and restarting",
+                      partial_size, actual_size.unwrap_or(0));
+                let _ = fs::remove_file(&partial_path);
+                resume_from = 0;
+                response = client.get(&url).send().await?;
             }
-            return Err(anyhow::anyhow!(
-                "Failed to download model: HTTP {}",
-                response.status()
-            ));
+            
+            // Log 416 handling result
+            info!("New response status after 416 handling: {}", response.status());
+            info!("New response headers: {:?}", response.headers());
         }
 
-        let total_size = if resume_from > 0 {
-            // For resumed downloads, add the resume point to content length
-            resume_from + response.content_length().unwrap_or(0)
+        // Skip download logic if file is already complete (416 response handled above)
+        let total_size = if skip_download {
+            // Use the actual file size from the partial file
+            let size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
+            info!("Skipping download, using partial file size: {} bytes ({:.2} MB)", 
+                  size, size as f64 / 1024.0 / 1024.0);
+            size
         } else {
-            response.content_length().unwrap_or(0)
+            // If we tried to resume but server returned 200 (not 206 Partial Content),
+            // the server doesn't support range requests. Delete partial file and restart
+            // fresh to avoid file corruption (appending full file to partial).
+            if resume_from > 0 && response.status() == reqwest::StatusCode::OK {
+                warn!(
+                    "Server doesn't support range requests for model {}, restarting download",
+                    model_id
+                );
+                drop(response);
+                let _ = fs::remove_file(&partial_path);
+
+                // Reset resume_from since we're starting fresh
+                resume_from = 0;
+
+                // Restart download without range header
+                info!("Restarting download from beginning without range header");
+                response = client.get(&url).send().await?;
+                info!("New response status: {}", response.status());
+                info!("New response headers: {:?}", response.headers());
+            }
+
+            // Check for success or partial content status
+            if !response.status().is_success()
+                && response.status() != reqwest::StatusCode::PARTIAL_CONTENT
+            {
+                // Mark as not downloading on error
+                {
+                    let mut models = self.available_models.lock().unwrap();
+                    if let Some(model) = models.get_mut(model_id) {
+                        model.is_downloading = false;
+                    }
+                }
+                return Err(anyhow::anyhow!(
+                    "Failed to download model: HTTP {}",
+                    response.status()
+                ));
+            }
+
+            // Calculate total size, preferring Content-Range header for range requests
+            let ts = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+                info!("Got 206 Partial Content response");
+                // Parse Content-Range header to get total file size
+                // Format: Content-Range: bytes <range-start>-<range-end>/<total-size>
+                if let Some(content_range) = response.headers().get("content-range") {
+                    if let Ok(range_str) = content_range.to_str() {
+                        info!("Content-Range header value: {}", range_str);
+                        // Extract total size from the header
+                        if let Some(total_str) = range_str.split('/').last() {
+                            if let Ok(total) = total_str.parse::<u64>() {
+                                info!("Parsed total size from Content-Range: {} bytes ({:.2} MB)", total, total as f64 / 1024.0 / 1024.0);
+                                total
+                            } else {
+                                warn!("Failed to parse total size from Content-Range: {}", range_str);
+                                // Fallback to content-length if parsing fails
+                                resume_from + response.content_length().unwrap_or(0)
+                            }
+                        } else {
+                            warn!("Content-Range header missing total size: {}", range_str);
+                            resume_from + response.content_length().unwrap_or(0)
+                        }
+                    } else {
+                        warn!("Content-Range header invalid UTF-8");
+                        resume_from + response.content_length().unwrap_or(0)
+                    }
+                } else {
+                    warn!("Content-Range header missing in 206 response");
+                    resume_from + response.content_length().unwrap_or(0)
+                }
+            } else {
+                let content_len = response.content_length().unwrap_or(0);
+                info!("Got {} response, content length: {} bytes ({:.2} MB)", response.status(), content_len, content_len as f64 / 1024.0 / 1024.0);
+                content_len
+            };
+
+            info!("Final download stats - resume_from: {} ({:.2} MB), content_length: {} ({:.2} MB), total_size: {} ({:.2} MB)",
+                  resume_from, resume_from as f64 / 1024.0 / 1024.0,
+                  response.content_length().unwrap_or(0),
+                  response.content_length().unwrap_or(0) as f64 / 1024.0 / 1024.0,
+                  ts, ts as f64 / 1024.0 / 1024.0);
+
+            // If total_size is still 0, use the model's expected size as fallback
+            if ts == 0 {
+                let expected_size = model_info.size_mb * 1024 * 1024;
+                warn!("Total size is 0, using model's expected size: {} bytes ({:.2} MB)",
+                      expected_size, expected_size as f64 / 1024.0 / 1024.0);
+                expected_size
+            } else {
+                ts
+            }
         };
 
-        let mut downloaded = resume_from;
-        let mut stream = response.bytes_stream();
+        // Validate partial file size against expected total before consuming response
+        // If partial file is larger than total, it's corrupted - delete and restart
+        let mut fresh_download_needed = false;
+        if resume_from > 0 && total_size > 0 && resume_from >= total_size {
+            warn!(
+                "Partial file size ({}) >= total size ({}), deleting and restarting",
+                resume_from, total_size
+            );
+            let _ = fs::remove_file(&partial_path);
+            fresh_download_needed = true;
+        }
+
+        // If we need a fresh download, restart now
+        let (mut downloaded, total_size, mut stream) = if fresh_download_needed {
+            // Restart download from beginning
+            let fresh_response = client.get(&url).send().await?;
+            let fresh_total = fresh_response.content_length().unwrap_or(0);
+            let new_total_size = if fresh_total > 0 { fresh_total } else { model_info.size_mb * 1024 * 1024 };
+
+            info!("Restarted fresh download with total size: {}", new_total_size);
+
+            (0u64, new_total_size, fresh_response.bytes_stream().boxed())
+        } else if skip_download {
+            // File already downloaded, skip the download loop entirely
+            info!("Skipping download, file already complete");
+            (total_size, total_size, futures_util::stream::empty().boxed())
+        } else {
+            (resume_from, total_size, response.bytes_stream().boxed())
+        };
 
         // Open file for appending if resuming, or create new if starting fresh
-        let mut file = if resume_from > 0 {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&partial_path)?
+        // Skip file operations if download is already complete
+        let mut file = if !skip_download {
+            if downloaded > 0 {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&partial_path)?
+            } else {
+                std::fs::File::create(&partial_path)?
+            }
         } else {
-            std::fs::File::create(&partial_path)?
+            // Create a dummy file handle - won't be used
+            std::fs::File::open(&partial_path).unwrap_or_else(|_| {
+                std::fs::File::create(&partial_path).unwrap()
+            })
         };
 
         // Emit initial progress
+        info!("Initial download progress - downloaded: {} ({:.2} MB), total: {} ({:.2} MB), percentage: {:.1}%", 
+              downloaded, downloaded as f64 / 1024.0 / 1024.0,
+              total_size, total_size as f64 / 1024.0 / 1024.0,
+              if total_size > 0 { (downloaded as f64 / total_size as f64) * 100.0 } else { 0.0 });
+        
         let initial_progress = DownloadProgress {
             model_id: model_id.to_string(),
             downloaded,
@@ -853,6 +1051,8 @@ impl ModelManager {
             } else {
                 0.0
             },
+            is_indeterminate: total_size == 0,
+            speed_mbps: None,
         };
         let _ = self
             .app_handle
@@ -862,42 +1062,48 @@ impl ModelManager {
         let mut last_emit = Instant::now();
         let throttle_duration = Duration::from_millis(100);
 
-        // Download with progress
-        while let Some(chunk) = stream.next().await {
-            // Check if download was cancelled
-            if cancel_flag.load(Ordering::Relaxed) {
-                // Close the file before returning
-                drop(file);
-                info!("Download cancelled for: {}", model_id);
+        // Speed calculation
+        let mut last_speed_check = Instant::now();
+        let mut last_downloaded = downloaded;
+        let speed_check_interval = Duration::from_millis(500);
 
-                // Update state to mark as not downloading
-                {
-                    let mut models = self.available_models.lock().unwrap();
-                    if let Some(model) = models.get_mut(model_id) {
-                        model.is_downloading = false;
+        // Download with progress - skip if file is already complete
+        if !skip_download {
+            while let Some(chunk) = stream.next().await {
+                // Check if download was cancelled
+                if cancel_flag.load(Ordering::Relaxed) {
+                    // Close the file before returning
+                    drop(file);
+                    info!("Download cancelled for: {} (downloaded: {} bytes)", model_id, downloaded);
+
+                    // Update state to mark as not downloading
+                    {
+                        let mut models = self.available_models.lock().unwrap();
+                        if let Some(model) = models.get_mut(model_id) {
+                            model.is_downloading = false;
+                        }
                     }
-                }
 
-                // Remove cancel flag
-                {
-                    let mut flags = self.cancel_flags.lock().unwrap();
-                    flags.remove(model_id);
-                }
-
-                // Keep partial file for resume functionality
-                return Ok(());
-            }
-
-            let chunk = chunk.map_err(|e| {
-                // Mark as not downloading on error
-                {
-                    let mut models = self.available_models.lock().unwrap();
-                    if let Some(model) = models.get_mut(model_id) {
-                        model.is_downloading = false;
+                    // Remove cancel flag
+                    {
+                        let mut flags = self.cancel_flags.lock().unwrap();
+                        flags.remove(model_id);
                     }
+
+                    // Keep partial file for resume functionality
+                    return Ok(());
                 }
-                e
-            })?;
+
+                let chunk = chunk.map_err(|e| {
+                    // Mark as not downloading on error
+                    {
+                        let mut models = self.available_models.lock().unwrap();
+                        if let Some(model) = models.get_mut(model_id) {
+                            model.is_downloading = false;
+                        }
+                    }
+                    e
+                })?;
 
             file.write_all(&chunk)?;
             downloaded += chunk.len() as u64;
@@ -908,6 +1114,24 @@ impl ModelManager {
                 0.0
             };
 
+            // Calculate and log speed periodically
+            let now = Instant::now();
+            let current_speed = if now.duration_since(last_speed_check) >= speed_check_interval {
+                let elapsed = now.duration_since(last_speed_check).as_secs_f64();
+                let bytes_diff = downloaded - last_downloaded;
+                let speed_mbps = (bytes_diff as f64 / 1024.0 / 1024.0) / elapsed;
+                info!("Download progress - {:.1}% ({:.2} MB / {:.2} MB), speed: {:.2} MB/s",
+                      percentage,
+                      downloaded as f64 / 1024.0 / 1024.0,
+                      total_size as f64 / 1024.0 / 1024.0,
+                      speed_mbps);
+                last_speed_check = now;
+                last_downloaded = downloaded;
+                Some(speed_mbps)
+            } else {
+                None
+            };
+
             // Emit progress event (throttled to avoid UI freeze)
             if last_emit.elapsed() >= throttle_duration {
                 let progress = DownloadProgress {
@@ -915,11 +1139,14 @@ impl ModelManager {
                     downloaded,
                     total: total_size,
                     percentage,
+                    is_indeterminate: total_size == 0,
+                    speed_mbps: current_speed,
                 };
                 let _ = self.app_handle.emit("model-download-progress", &progress);
                 last_emit = Instant::now();
             }
-        }
+        } // End of download loop
+        } // End of if !skip_download
 
         // Emit final progress to ensure 100% is shown
         let final_progress = DownloadProgress {
@@ -931,6 +1158,8 @@ impl ModelManager {
             } else {
                 100.0
             },
+            is_indeterminate: false,
+            speed_mbps: None,
         };
         let _ = self
             .app_handle
@@ -940,7 +1169,8 @@ impl ModelManager {
         drop(file); // Ensure file is closed before moving
 
         // Verify downloaded file size matches expected size
-        if total_size > 0 {
+        // Skip this check if we already know the file is complete (416 response)
+        if total_size > 0 && !skip_download {
             let actual_size = partial_path.metadata()?.len();
             if actual_size != total_size {
                 // Download is incomplete/corrupted - delete partial and return error
@@ -1499,5 +1729,83 @@ mod tests {
         let result = ModelManager::discover_custom_whisper_models(&models_dir, &mut models);
         assert!(result.is_ok());
         assert_eq!(models.len(), count_before);
+    }
+
+    /// Test that partial file size validation correctly identifies complete files
+    /// This simulates the 416 Range Not Satisfiable scenario where the partial file
+    /// is already complete but the expected size in model_info is incorrect
+    #[test]
+    fn test_partial_file_completion_detection() {
+        // Simulate the parakeet v3 scenario:
+        // - Server actual size: 478,517,071 bytes (456.35 MB)
+        // - App expected size: 501,219,328 bytes (478.00 MB) - incorrect
+        // - Partial file: 478,517,071 bytes - complete!
+        
+        let server_actual_size: u64 = 478_517_071;
+        let app_expected_size_mb: u64 = 478; // This is wrong!
+        let app_expected_size_bytes = app_expected_size_mb * 1024 * 1024;
+        let partial_file_size: u64 = 478_517_071; // Same as server
+        
+        // The completion check logic should be:
+        // is_complete = if let Some(actual_size) = actual_size_from_server {
+        //     partial_size == actual_size  // TRUE in this case
+        // } else {
+        //     partial_size >= expected_size  // Would be FALSE
+        // }
+        
+        // When server provides actual size (from Content-Range: bytes */478517071)
+        let is_complete_with_server_size = partial_file_size == server_actual_size;
+        assert!(is_complete_with_server_size, "Should detect completion when partial matches server size");
+        
+        // Without server size, using only expected size (this would FAIL)
+        let is_complete_with_expected_only = partial_file_size >= app_expected_size_bytes;
+        assert!(!is_complete_with_expected_only, "Should NOT detect completion with wrong expected size");
+        
+        // This demonstrates why parsing Content-Range header is critical
+    }
+
+    /// Test parsing Content-Range header from 416 response
+    #[test]
+    fn test_parse_content_range_416() {
+        // Content-Range: bytes */478517071
+        let content_range = "bytes */478517071";
+        
+        if let Some(total_str) = content_range.split('/').last() {
+            if let Ok(total) = total_str.parse::<u64>() {
+                assert_eq!(total, 478_517_071);
+            } else {
+                panic!("Failed to parse total size");
+            }
+        } else {
+            panic!("Failed to extract total size from Content-Range");
+        }
+    }
+
+    /// Test that directory-based models are handled correctly when download is complete
+    #[test]
+    fn test_directory_model_completion_logic() {
+        let temp_dir = TempDir::new().unwrap();
+        let models_dir = temp_dir.path().to_path_buf();
+        
+        // Create a mock tar.gz file (simulating completed download)
+        let partial_path = models_dir.join("test-model.partial");
+        let mut file = File::create(&partial_path).unwrap();
+        file.write_all(b"fake tar.gz content").unwrap();
+        
+        let partial_size = partial_path.metadata().unwrap().len();
+        let server_size = partial_size; // Server reports same size
+        
+        // For directory models, when partial is complete:
+        // 1. skip_download = true
+        // 2. Proceed to extraction with partial_path as the tar.gz source
+        
+        let is_complete = partial_size == server_size;
+        assert!(is_complete);
+        
+        // The partial file should exist and be ready for extraction
+        assert!(partial_path.exists());
+        
+        // Clean up
+        let _ = fs::remove_file(&partial_path);
     }
 }

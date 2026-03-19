@@ -116,6 +116,7 @@
     "extractingGeneric": "Đang giải nén...",
     "downloading": "Đang tải xuống {{percentage}}%",
     "downloadingMultiple": "Đang tải xuống {{count}} mô hình...",
+    "downloadingGeneric": "Đang tải xuống...",
     "modelReady": "Mô Hình Sẵn Sàng",
     "loading": "Đang tải {{modelName}}...",
     "loadingGeneric": "Đang tải...",

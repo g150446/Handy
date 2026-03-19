@@ -9,6 +9,8 @@ interface DownloadProgress {
   downloaded: number;
   total: number;
   percentage: number;
+  is_indeterminate: boolean;
+  speed_mbps?: number | null; // Download speed in MB/s from backend
 }
 
 interface DownloadStats {
@@ -171,6 +173,7 @@ export const useModelStore = create<ModelsStore>()(
               downloaded: 0,
               total: 0,
               percentage: 0,
+              is_indeterminate: true,
             };
           }),
         );
@@ -182,6 +185,8 @@ export const useModelStore = create<ModelsStore>()(
           set(
             produce((state) => {
               delete state.downloadingModels[modelId];
+              delete state.downloadProgress[modelId];
+              delete state.downloadStats[modelId];
             }),
           );
           return false;
@@ -191,6 +196,8 @@ export const useModelStore = create<ModelsStore>()(
         set(
           produce((state) => {
             delete state.downloadingModels[modelId];
+            delete state.downloadProgress[modelId];
+            delete state.downloadStats[modelId];
           }),
         );
         return false;
@@ -280,7 +287,15 @@ export const useModelStore = create<ModelsStore>()(
           produce((state) => {
             const current = state.downloadStats[progress.model_id];
 
-            if (!current) {
+            // Use backend-provided speed if available
+            if (progress.speed_mbps !== undefined && progress.speed_mbps !== null) {
+              state.downloadStats[progress.model_id] = {
+                startTime: current?.startTime || now,
+                lastUpdate: now,
+                totalDownloaded: progress.downloaded,
+                speed: progress.speed_mbps,
+              };
+            } else if (!current) {
               state.downloadStats[progress.model_id] = {
                 startTime: now,
                 lastUpdate: now,

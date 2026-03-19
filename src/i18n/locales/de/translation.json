@@ -116,6 +116,7 @@
     "extractingGeneric": "Wird entpackt...",
     "downloading": "Herunterladen {{percentage}}%",
     "downloadingMultiple": "Lade {{count}} Modelle herunter...",
+    "downloadingGeneric": "Herunterladen...",
     "modelReady": "Modell bereit",
     "loading": "Lade {{modelName}}...",
     "loadingGeneric": "Wird geladen...",

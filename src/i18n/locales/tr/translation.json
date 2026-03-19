@@ -115,6 +115,7 @@
     "extractingGeneric": "Çıkarılıyor...",
     "downloading": "%{{percentage}} indiriliyor",
     "downloadingMultiple": "{{count}} model indiriliyor...",
+    "downloadingGeneric": "İndiriliyor...",
     "modelReady": "Model Hazır",
     "loading": "{{modelName}} yükleniyor...",
     "loadingGeneric": "Yükleniyor...",

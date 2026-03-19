@@ -115,6 +115,7 @@
     "extractingGeneric": "...جاري الاستخراج",
     "downloading": "جاري التنزيل {{percentage}}%",
     "downloadingMultiple": "جاري تنزيل {{count}} من النماذج...",
+    "downloadingGeneric": "جاري التنزيل...",
     "modelReady": "النموذج جاهز",
     "loading": "...جاري تحميل {{modelName}}",
     "loadingGeneric": "...جاري التحميل",

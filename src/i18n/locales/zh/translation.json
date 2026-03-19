@@ -116,6 +116,7 @@
     "extractingGeneric": "解压中...",
     "downloading": "下载中 {{percentage}}%",
     "downloadingMultiple": "正在下载 {{count}} 个模型...",
+    "downloadingGeneric": "下载中...",
     "modelReady": "模型已就绪",
     "loading": "正在加载 {{modelName}}...",
     "loadingGeneric": "加载中...",

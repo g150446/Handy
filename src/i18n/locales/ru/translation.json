@@ -116,6 +116,7 @@
     "extractingGeneric": "Извлечение...",
     "downloading": "Загрузка {{percentage}} %",
     "downloadingMultiple": "Загрузка моделей {{count}}...",
+    "downloadingGeneric": "Загрузка...",
     "modelReady": "Модель готова",
     "loading": "Загрузка {{modelName}}...",
     "loadingGeneric": "Загрузка...",

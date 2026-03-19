@@ -116,6 +116,7 @@
     "extractingGeneric": "압축 해제 중...",
     "downloading": "다운로드 중 {{percentage}}%",
     "downloadingMultiple": "{{count}}개 모델 다운로드 중...",
+    "downloadingGeneric": "다운로드 중...",
     "modelReady": "모델 준비 완료",
     "loading": "{{modelName}} 로딩 중...",
     "loadingGeneric": "로딩 중...",

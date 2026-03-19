@@ -177,6 +177,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     if (progressValues.length > 0) {
       if (progressValues.length === 1) {
         const progress = progressValues[0];
+        if (progress.is_indeterminate) {
+          return t("modelSelector.downloadingGeneric");
+        }
         const percentage = Math.max(
           0,
           Math.min(100, Math.round(progress.percentage)),

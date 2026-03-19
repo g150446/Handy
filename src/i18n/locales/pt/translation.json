@@ -115,6 +115,7 @@
     "extractingGeneric": "Extraindo...",
     "downloading": "Baixando {{percentage}}%",
     "downloadingMultiple": "Baixando {{count}} modelos...",
+    "downloadingGeneric": "Baixando...",
     "modelReady": "Modelo Pronto",
     "loading": "Carregando {{modelName}}...",
     "loadingGeneric": "Carregando...",

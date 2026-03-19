@@ -115,6 +115,7 @@
     "extractingGeneric": "Rozbalování...",
     "downloading": "Stahování {{percentage}}%",
     "downloadingMultiple": "Stahování {{count}} modelů...",
+    "downloadingGeneric": "Stahování...",
     "modelReady": "Model připraven",
     "loading": "Načítám {{modelName}}...",
     "loadingGeneric": "Načítání...",

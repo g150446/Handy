@@ -6,6 +6,8 @@ interface DownloadProgress {
   downloaded: number;
   total: number;
   percentage: number;
+  is_indeterminate: boolean;
+  speed_mbps?: number | null;
 }
 
 interface DownloadStats {
@@ -33,10 +35,19 @@ const DownloadProgressDisplay: React.FC<DownloadProgressDisplayProps> = ({
 
   const progressData: ProgressData[] = progressValues.map((progress) => {
     const stats = downloadStats[progress.model_id];
+    // Use backend speed if available, otherwise use frontend-calculated speed
+    const speed = progress.speed_mbps !== undefined && progress.speed_mbps !== null 
+      ? progress.speed_mbps 
+      : stats?.speed;
+    
     return {
       id: progress.model_id,
       percentage: progress.percentage,
-      speed: stats?.speed,
+      speed: speed,
+      isIndeterminate: progress.is_indeterminate,
+      downloaded: progress.downloaded,
+      total: progress.total,
+      label: progress.model_id,
     };
   });
 
@@ -45,6 +56,7 @@ const DownloadProgressDisplay: React.FC<DownloadProgressDisplayProps> = ({
       progress={progressData}
       className={className}
       showSpeed={progressValues.length === 1}
+      showDetails={progressValues.length === 1}
       size="medium"
     />
   );
