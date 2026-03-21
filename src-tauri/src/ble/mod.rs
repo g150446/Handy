@@ -51,6 +51,10 @@ use uuid::{uuid, Uuid};
 
 pub const BLE_DEVICE_NAME: &str = "AtomEchoS3R";
 
+fn is_known_ble_device(name: &str) -> bool {
+    name.contains("AtomEchoS3R") || name.contains("XIAOVoice")
+}
+
 pub const SERVICE_UUID: Uuid = uuid!("00000001-0000-1000-8000-00805f9b34fb");
 /// TX characteristic: device → host, notify
 pub const TX_CHAR_UUID: Uuid = uuid!("00000002-0000-1000-8000-00805f9b34fb");
@@ -217,7 +221,7 @@ impl BleManager {
         for p in central.peripherals().await? {
             if let Ok(Some(props)) = p.properties().await {
                 let name = props.local_name.unwrap_or_default();
-                if name.contains(BLE_DEVICE_NAME) {
+                if is_known_ble_device(&name) {
                     // On macOS, BDAddr is always 00:00:00:00:00:00 (CoreBluetooth privacy).
                     // Use PeripheralId (UUID) as the stable identifier instead.
                     let id = p.id().to_string();
@@ -247,11 +251,9 @@ impl BleManager {
                 }
 
                 if let Ok(Some(props)) = peripheral.properties().await {
-                    if props
-                        .local_name
-                        .as_deref()
-                        .unwrap_or("")
-                        .contains(BLE_DEVICE_NAME)
+                    if is_known_ble_device(
+                        props.local_name.as_deref().unwrap_or(""),
+                    )
                     {
                         if preferred_id.is_none() {
                             return Ok(Some(peripheral));
@@ -657,6 +659,22 @@ impl BleManager {
                                     Err(err) => {
                                         error!("Failed to toggle control mode from BLE: {err}");
                                     }
+                                }
+                            }
+                            0x10 => {
+                                if data.len() >= 7 {
+                                    let z = f32::from_le_bytes([data[3], data[4], data[5], data[6]]);
+                                    info!("BLE debug: motion active z={:.2}", z);
+                                } else {
+                                    info!("BLE debug: motion active");
+                                }
+                            }
+                            0x11 => {
+                                if data.len() >= 7 {
+                                    let z = f32::from_le_bytes([data[3], data[4], data[5], data[6]]);
+                                    info!("BLE debug: motion settled z={:.2}", z);
+                                } else {
+                                    info!("BLE debug: motion settled");
                                 }
                             }
                             other => {
