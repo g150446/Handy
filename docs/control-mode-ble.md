@@ -4,7 +4,7 @@
 
 Atom Echo S3R を BLE で `Handy` に接続した状態で、control mode を終了した直後の最初の single-click が効かない不具合を修正した。
 
-今回のデバッグでは、`Handy` 側の BLE イベント解釈と、`voice-bridge-ble` 側ファームウェアの実際の通知仕様にズレがあることが分かった。あわせて、USB シリアル経由で single-click / double-click をエミュレートできるようにし、実機再現を安定して行えるようにした。
+今回のデバッグでは、`Handy` 側の BLE イベント解釈と、`harness-node` 側ファームウェアの実際の通知仕様にズレがあることが分かった。あわせて、USB シリアル経由で single-click / double-click をエミュレートできるようにし、実機再現を安定して行えるようにした。
 
 ---
 
@@ -118,7 +118,7 @@ Atom Echo S3R を BLE で `Handy` に接続した状態で、control mode を終
 
 ### 前提
 
-- `voice-bridge-ble` 側の最新ファームウェアが Atom Echo S3R に書き込まれていること
+- `harness-node` 側の最新ファームウェアが Atom Echo S3R に書き込まれていること
 - USB 接続したデバイスのシリアルポートが見えていること
 - この Mac では `/dev/cu.usbmodem1101` を使用した
 
@@ -216,7 +216,7 @@ USB シリアルで次の順に送ると、control mode まわりの主要回帰
 - `src-tauri/src/control.rs`
 - `src-tauri/src/actions.rs`
 
-### voice-bridge-ble
+### harness-node
 
 - `atom_echo_s3r/main.c`
 - `atom_echo_s3r/CMakeLists.txt`
@@ -225,4 +225,4 @@ USB シリアルで次の順に送ると、control mode まわりの主要回帰
 
 ## 補足
 
-`Handy` と `voice-bridge-ble` は別リポジトリとして扱うこと。修正や commit / push はそれぞれのリポジトリルートで別々に行う。
+`Handy` と `harness-node` は別リポジトリとして扱うこと。修正や commit / push はそれぞれのリポジトリルートで別々に行う。

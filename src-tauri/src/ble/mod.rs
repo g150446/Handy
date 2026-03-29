@@ -52,7 +52,9 @@ use uuid::{uuid, Uuid};
 pub const BLE_DEVICE_NAME: &str = "AtomEchoS3R";
 
 fn is_known_ble_device(name: &str) -> bool {
-    name.contains("AtomEchoS3R") || name.contains("XIAOVoice")
+    name.contains("AtomEchoS3R")
+        || name.contains("HarnessNode")
+        || name.contains("XIAOVoice")
 }
 
 pub const SERVICE_UUID: Uuid = uuid!("00000001-0000-1000-8000-00805f9b34fb");

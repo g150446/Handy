@@ -1,12 +1,12 @@
-# XIAOVoice + Handy 統合ガイド
+# HarnessNode + Handy 統合ガイド
 
-Seeed XIAO nRF52840 Sense に書き込んだ `nrf52-handy` ファームウェア（BLE デバイス名: `XIAOVoice`）と Handy アプリの連携について説明します。
+Seeed XIAO nRF52840 Sense に書き込んだ `nordic-main` ファームウェア（BLE デバイス名: `HarnessNode`）と Handy アプリの連携について説明します。
 
 ---
 
 ## 概要
 
-XIAOVoice は腕のジェスチャーを IMU（LSM6DS3TR-C）で検出し、BLE 経由で Handy へ録音開始・停止を通知するデバイスです。ユーザーはボタンを押さずに、腕を水平から持ち上げるジェスチャーだけでプッシュトゥトーク（PTT）録音を開始できます。
+HarnessNode は腕のジェスチャーを IMU（LSM6DS3TR-C）で検出し、BLE 経由で Handy へ録音開始・停止を通知するデバイスです。ユーザーはボタンを押さずに、腕を水平から持ち上げるジェスチャーだけでプッシュトゥトーク（PTT）録音を開始できます。
 
 ジェスチャー判別はファームウェア側で完結しており、Handy は BLE イベント（`0x01` / `0x02`）を受け取るだけです。
 
@@ -14,7 +14,7 @@ XIAOVoice は腕のジェスチャーを IMU（LSM6DS3TR-C）で検出し、BLE 
 
 ## BLE 認識
 
-Handy の BLE マネージャー（`src-tauri/src/ble/mod.rs`）の `is_known_ble_device()` 関数に `XIAOVoice` が登録されています。BLE スキャン中にこのデバイス名が見つかると、既知デバイスとして自動認識されます。
+Handy の BLE マネージャー（`src-tauri/src/ble/mod.rs`）の `is_known_ble_device()` 関数に `HarnessNode` が登録されています。BLE スキャン中にこのデバイス名が見つかると、既知デバイスとして自動認識されます。
 
 ---
 
@@ -100,9 +100,9 @@ motion_active / motion_settled の z 値は info レベルで出力されるた�
 
 ## 接続セットアップ
 
-1. XIAO nRF52840 Sense に `nrf52-handy` ファームウェアを書き込みます（`nrf52-handy/build_and_flash.sh`）。
-2. デバイスを起動すると青色 LED が点滅し、`XIAOVoice` としてアドバタイジングを開始します。
-3. Handy アプリの BLE 設定画面でデバイスをスキャンし、`XIAOVoice` を選択してペアリングします。
+1. XIAO nRF52840 Sense に `nordic-main` ファームウェアを書き込みます（`nordic-main/build_and_flash.sh`）。
+2. デバイスを起動すると青色 LED が点滅し、`HarnessNode` としてアドバタイジングを開始します。
+3. Handy アプリの BLE 設定画面でデバイスをスキャンし、`HarnessNode` を選択してペアリングします。
 4. 接続が確立すると XIAO の LED が緑色に変わります。
 
 以降は Handy 起動時に自動で再接続されます（`is_known_ble_device()` により自動認識）。
@@ -113,5 +113,5 @@ motion_active / motion_settled の z 値は info レベルで出力されるた�
 
 - **文字起こしには Mac マイクを使用**: 録音は Mac のマイクロフォンが主系統です。BLE 経由の PCM オーディオ（`recording_samples`）も `device_button_active` が true の間は蓄積されますが、Whisper / Parakeet への入力は Mac マイク録音が主体です。BLE PCM の利用方法は実装の状態によります。
 - **ジェスチャー精度**: ジェスチャーしきい値（`GESTURE_ACTIVE_Z_MIN/MAX`, `GESTURE_SETTLE_Z_MIN`, `GESTURE_WINDOW_MS`）はファームウェアにハードコードされています。誤検知が多い場合はファームウェアを再ビルドして調整してください。
-- **OTA アップデート**: ファームウェアの更新は BLE OTA で行えます（`mac_client/ota_updater.py --device XIAOVoice ../nrf52-handy/ota_update.bin`）。Handy と XIAOVoice が同時に接続している状態では OTA は実行しないでください。
-- **旧ファームウェア（nrf52-voice / VoiceBridge52）との互換性なし**: `nrf52-voice` の BLE プロトコルとは異なります。Handy は `XIAOVoice` のデバイス名で認識します。
+- **OTA アップデート**: ファームウェアの更新は BLE OTA で行えます（`mac_client/ota_updater.py --device HarnessNode ../nordic-main/ota_update.bin`）。Handy と HarnessNode が同時に接続している状態では OTA は実行しないでください。
+- **旧ファームウェア（nrf52-voice / VoiceBridge52）との互換性なし**: `nrf52-voice` の BLE プロトコルとは異なります。Handy は `HarnessNode` のデバイス名で認識します。
