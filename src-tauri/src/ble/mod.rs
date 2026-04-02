@@ -385,6 +385,13 @@ impl BleManager {
         // Allow BLE to stabilise before the caller sends commands.
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
+        // Claim primary role so audio and BLE events are routed to Handy.
+        // Android yields via 0x03 when its ConnectionPriority preference is
+        // MAC_HANDY, so Handy claiming here is safe for both preference modes.
+        if let Err(e) = self.claim_primary_role().await {
+            warn!("BLE: failed to claim primary role after connect: {e}");
+        }
+
         let status = self.status();
         if let Err(e) = self.app_handle.emit("ble-status-changed", &status) {
             error!("Failed to emit ble-status-changed: {e}");
@@ -679,6 +686,28 @@ impl BleManager {
                                     info!("BLE debug: motion settled");
                                 }
                             }
+                            0x31 => {
+                                // A second client (Android) connected and is now secondary.
+                                // Handy is already primary; no role change needed here.
+                                // Android's 0x31 handler yields (0x03) when its preference
+                                // is MAC_HANDY, which would hand primary to Handy anyway.
+                                info!("BLE event: peer connected (0x31) – Handy stays primary");
+                            }
+                            0x32 => {
+                                // The other client disconnected; reclaim primary role so
+                                // Handy continues to receive audio in single-connection mode.
+                                info!("BLE event: peer disconnected (0x32) – reclaiming primary role");
+                                let ble_clone = ble.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(200))
+                                        .await;
+                                    if let Err(e) = ble_clone.claim_primary_role().await {
+                                        warn!(
+                                            "BLE: failed to reclaim primary after peer disconnect: {e}"
+                                        );
+                                    }
+                                });
+                            }
                             other => {
                                 debug!("BLE event: unknown code {:#04x}", other);
                             }
@@ -971,6 +1000,32 @@ impl BleManager {
     }
 
     // ─────────────────────────────────────────────── recording commands ──
+
+    /// Send `0x02` to the firmware to claim the primary role.
+    /// In dual-connection mode the firmware routes audio and BLE events only to
+    /// the primary connection, so Handy must claim primary on every (re)connect
+    /// and after a peer disconnects.
+    async fn claim_primary_role(&self) -> Result<()> {
+        let peripheral = self
+            .peripheral
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Not connected to BLE device"))?;
+
+        let rx_char = peripheral
+            .characteristics()
+            .into_iter()
+            .find(|c| c.uuid == RX_CHAR_UUID)
+            .ok_or_else(|| anyhow::anyhow!("RX write characteristic not found"))?;
+
+        peripheral
+            .write(&rx_char, &[0x02], WriteType::WithoutResponse)
+            .await?;
+
+        info!("BLE: claimed primary role (0x02)");
+        Ok(())
+    }
 
     /// Re-send 0x01 to the device to resume audio streaming **without** resetting the
     /// sample buffer.  Used after a double-click button-release is discarded so that
