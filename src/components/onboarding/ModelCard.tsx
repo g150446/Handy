@@ -146,7 +146,12 @@ const ModelCard: React.FC<ModelCardProps> = ({
                 {t("modelSelector.active")}
               </Badge>
             )}
-            {model.is_custom && (
+            {model.is_external && (
+              <Badge variant="secondary">
+                {t("modelSelector.external", { defaultValue: "External" })}
+              </Badge>
+            )}
+            {model.is_custom && !model.is_external && (
               <Badge variant="secondary">{t("modelSelector.custom")}</Badge>
             )}
             {status === "switching" && (

@@ -137,7 +137,8 @@
         "checkFailed": "権限の確認に失敗しました。もう一度お試しください。",
         "requestFailed": "権限のリクエストに失敗しました。もう一度お試しください。"
       }
-    }
+    },
+    "externalModelDescription": "このMacの外部キャッシュから利用"
   },
   "modelSelector": {
     "custom": "カスタム",
@@ -167,7 +168,8 @@
       "languageOnly": "{{language}}のみ"
     },
     "cancel": "キャンセル",
-    "cancelDownload": "ダウンロードをキャンセル"
+    "cancelDownload": "ダウンロードをキャンセル",
+    "external": "外部"
   },
   "settings": {
     "modelSettings": {

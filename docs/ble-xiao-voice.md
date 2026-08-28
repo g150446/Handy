@@ -115,3 +115,15 @@ motion_active / motion_settled の z 値は info レベルで出力されるた�
 - **ジェスチャー精度**: ジェスチャーしきい値（`GESTURE_ACTIVE_Z_MIN/MAX`, `GESTURE_SETTLE_Z_MIN`, `GESTURE_WINDOW_MS`）はファームウェアにハードコードされています。誤検知が多い場合はファームウェアを再ビルドして調整してください。
 - **OTA アップデート**: ファームウェアの更新は BLE OTA で行えます（`mac_client/ota_updater.py --device HarnessNode ../nordic-main/ota_update.bin`）。Handy と HarnessNode が同時に接続している状態では OTA は実行しないでください。
 - **旧ファームウェア（nrf52-voice / VoiceBridge52）との互換性なし**: `nrf52-voice` の BLE プロトコルとは異なります。Handy は `HarnessNode` のデバイス名で認識します。
+
+## voice-harness-android との関係
+
+Android アプリ（`voice-harness-android`）の「優先接続」トグル（Mac Handy / Android）は、**HarnessNode 上の dual-client primary をどちらが取るか**を切り替えるものです。Android が音声やイベントを Handy へネットワーク中継する機能はありません。
+
+| 目的 | 必要な接続 |
+|------|------------|
+| Handy で Mac に文字を貼る | **Mac ↔ HarnessNode の直接 BLE**（現状どおり） |
+| Android だけで ASR / LLM / TTS | Android ↔ HarnessNode のみ（Handy 不要） |
+| 両方接続して切替 | 両方 BLE 接続 + Android 側トグルで primary を選択 |
+
+Handy を使う場合は、本ドキュメントの「接続セットアップ」に従い Mac から `HarnessNode` へ直接接続してください。詳細な dual-connection 設計は harness-node 側の `docs/ble_dual_connection_audio_lessons.md` を参照してください。

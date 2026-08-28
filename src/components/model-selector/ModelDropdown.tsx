@@ -50,7 +50,14 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
                 <div>
                   <div className="text-sm text-text/80">
                     {getTranslatedModelName(model, t)}
-                    {model.is_custom && (
+                    {model.is_external && (
+                      <span className="ms-1.5 text-[10px] font-medium text-text/40 uppercase">
+                        {t("modelSelector.external", {
+                          defaultValue: "External",
+                        })}
+                      </span>
+                    )}
+                    {model.is_custom && !model.is_external && (
                       <span className="ms-1.5 text-[10px] font-medium text-text/40 uppercase">
                         {t("modelSelector.custom")}
                       </span>

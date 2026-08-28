@@ -8,7 +8,7 @@ use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,6 +45,13 @@ pub struct ModelInfo {
     pub is_recommended: bool,       // Whether this is the recommended model for new users
     pub supported_languages: Vec<String>, // Languages this model can transcribe
     pub is_custom: bool,            // Whether this is a user-provided custom model
+    /// Absolute path when the model lives outside Handy's models directory
+    /// (e.g. OpenWhispr / Meetily / Hugging Face cache).
+    #[serde(default)]
+    pub local_path: Option<String>,
+    /// True when the model is referenced from an external cache (not copied into Handy).
+    #[serde(default)]
+    pub is_external: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -115,6 +122,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: whisper_languages.clone(),
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -139,6 +148,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: whisper_languages.clone(),
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -162,6 +173,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: whisper_languages.clone(),
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -185,6 +198,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: whisper_languages.clone(),
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -209,6 +224,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: whisper_languages,
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -233,6 +250,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: vec!["en".to_string()],
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -266,6 +285,8 @@ impl ModelManager {
                 is_recommended: true,
                 supported_languages: parakeet_v3_languages,
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -290,6 +311,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: vec!["ja".to_string()],
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -313,6 +336,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: vec!["en".to_string()],
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -338,6 +363,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: vec!["en".to_string()],
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -363,6 +390,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: vec!["en".to_string()],
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -388,6 +417,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: vec!["en".to_string()],
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -419,6 +450,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: sense_voice_languages,
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -445,6 +478,8 @@ impl ModelManager {
                 is_recommended: false,
                 supported_languages: gigaam_languages,
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -456,6 +491,11 @@ impl ModelManager {
         // Auto-discover custom imported Parakeet ONNX directories
         if let Err(e) = Self::discover_custom_parakeet_models(&models_dir, &mut available_models) {
             warn!("Failed to discover custom Parakeet models: {}", e);
+        }
+
+        // Discover compatible models from OpenWhispr / Meetily / Hugging Face caches
+        if let Err(e) = Self::discover_external_models(&models_dir, &mut available_models) {
+            warn!("Failed to discover external models: {}", e);
         }
 
         let manager = Self {
@@ -519,10 +559,10 @@ impl ModelManager {
         let mut models = self.available_models.lock().unwrap();
 
         for model in models.values_mut() {
+            let models_dir_path = self.models_dir.join(&model.filename);
+            let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
+
             if model.is_directory {
-                // For directory-based models, check if the directory exists
-                let model_path = self.models_dir.join(&model.filename);
-                let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
                 let extracting_path = self
                     .models_dir
                     .join(format!("{}.extracting", &model.filename));
@@ -538,24 +578,48 @@ impl ModelManager {
                     let _ = fs::remove_dir_all(&extracting_path);
                 }
 
-                model.is_downloaded = model_path.exists() && model_path.is_dir();
+                if models_dir_path.exists() && models_dir_path.is_dir() {
+                    model.is_downloaded = true;
+                    model.local_path = None;
+                    model.is_external = false;
+                } else if let Some(ref local) = model.local_path {
+                    let local_path = PathBuf::from(local);
+                    let available = local_path.exists() && local_path.is_dir();
+                    model.is_downloaded = available;
+                    model.is_external = available;
+                    if !available {
+                        model.local_path = None;
+                    }
+                } else {
+                    model.is_downloaded = false;
+                    model.is_external = false;
+                }
                 model.is_downloading = false;
 
-                // Get partial file size if it exists (for the .tar.gz being downloaded)
                 if partial_path.exists() {
                     model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
                 } else {
                     model.partial_size = 0;
                 }
             } else {
-                // For file-based models (existing logic)
-                let model_path = self.models_dir.join(&model.filename);
-                let partial_path = self.models_dir.join(format!("{}.partial", &model.filename));
-
-                model.is_downloaded = model_path.exists();
+                if models_dir_path.exists() {
+                    model.is_downloaded = true;
+                    model.local_path = None;
+                    model.is_external = false;
+                } else if let Some(ref local) = model.local_path {
+                    let local_path = PathBuf::from(local);
+                    let available = local_path.exists() && local_path.is_file();
+                    model.is_downloaded = available;
+                    model.is_external = available;
+                    if !available {
+                        model.local_path = None;
+                    }
+                } else {
+                    model.is_downloaded = false;
+                    model.is_external = false;
+                }
                 model.is_downloading = false;
 
-                // Get partial file size if it exists
                 if partial_path.exists() {
                     model.partial_size = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
                 } else {
@@ -721,6 +785,8 @@ impl ModelManager {
                     is_recommended: false,
                     supported_languages: vec![],
                     is_custom: true,
+                local_path: None,
+                is_external: false,
                 },
             );
         }
@@ -1328,17 +1394,14 @@ impl ModelManager {
 
         let mut deleted_something = false;
 
-        if model_info.is_directory {
-            // Delete complete model directory if it exists
-            if model_path.exists() && model_path.is_dir() {
+        // Only delete files under Handy's models directory — never touch external caches
+        if model_path.exists() {
+            if model_info.is_directory && model_path.is_dir() {
                 info!("Deleting model directory at: {:?}", model_path);
                 fs::remove_dir_all(&model_path)?;
                 info!("Model directory deleted successfully");
                 deleted_something = true;
-            }
-        } else {
-            // Delete complete model file if it exists
-            if model_path.exists() {
+            } else if !model_info.is_directory && model_path.is_file() {
                 info!("Deleting model file at: {:?}", model_path);
                 fs::remove_file(&model_path)?;
                 info!("Model file deleted successfully");
@@ -1354,8 +1417,26 @@ impl ModelManager {
             deleted_something = true;
         }
 
-        if !deleted_something {
+        // External-only models: unbind without deleting the source file
+        let is_external_only = model_info.is_external
+            || model_info
+                .local_path
+                .as_ref()
+                .map(|p| {
+                    let path = PathBuf::from(p);
+                    path.exists() && !path.starts_with(&self.models_dir)
+                })
+                .unwrap_or(false);
+
+        if !deleted_something && !is_external_only {
             return Err(anyhow::anyhow!("No model files found to delete"));
+        }
+
+        if is_external_only {
+            info!(
+                "Unbinding external model {} (source left intact at {:?})",
+                model_id, model_info.local_path
+            );
         }
 
         // Custom models should be removed from the list entirely since they
@@ -1365,7 +1446,15 @@ impl ModelManager {
             models.remove(model_id);
             debug!("ModelManager: removed custom model from available models");
         } else {
-            // Update download status (marks predefined models as not downloaded)
+            // Clear external binding and mark predefined models as not downloaded
+            {
+                let mut models = self.available_models.lock().unwrap();
+                if let Some(model) = models.get_mut(model_id) {
+                    model.local_path = None;
+                    model.is_external = false;
+                    model.is_downloaded = false;
+                }
+            }
             self.update_download_status()?;
             debug!("ModelManager: download status updated");
         }
@@ -1393,13 +1482,21 @@ impl ModelManager {
             ));
         }
 
-        let model_path = self.models_dir.join(&model_info.filename);
+        let models_dir_path = self.models_dir.join(&model_info.filename);
         let partial_path = self
             .models_dir
             .join(format!("{}.partial", &model_info.filename));
 
+        // Prefer Handy models dir; fall back to external cache path
+        let model_path = if models_dir_path.exists() {
+            models_dir_path
+        } else if let Some(ref local) = model_info.local_path {
+            PathBuf::from(local)
+        } else {
+            models_dir_path
+        };
+
         if model_info.is_directory {
-            // For directory-based models, ensure the directory exists and is complete
             if model_path.exists() && model_path.is_dir() && !partial_path.exists() {
                 Ok(model_path)
             } else {
@@ -1408,16 +1505,13 @@ impl ModelManager {
                     model_id
                 ))
             }
+        } else if model_path.exists() && model_path.is_file() && !partial_path.exists() {
+            Ok(model_path)
         } else {
-            // For file-based models (existing logic)
-            if model_path.exists() && !partial_path.exists() {
-                Ok(model_path)
-            } else {
-                Err(anyhow::anyhow!(
-                    "Complete model file not found: {}",
-                    model_id
-                ))
-            }
+            Err(anyhow::anyhow!(
+                "Complete model file not found: {}",
+                model_id
+            ))
         }
     }
 
@@ -1517,6 +1611,8 @@ impl ModelManager {
             is_recommended: false,
             supported_languages: vec![],
             is_custom: true,
+        local_path: None,
+        is_external: false,
         };
 
         self.available_models
@@ -1605,6 +1701,8 @@ impl ModelManager {
                     is_recommended: false,
                     supported_languages: vec![],
                     is_custom: true,
+                local_path: None,
+                is_external: false,
                 },
             );
         }
@@ -1623,6 +1721,291 @@ impl ModelManager {
                 fs::copy(entry.path(), dst.join(entry.file_name()))?;
             }
         }
+        Ok(())
+    }
+
+    /// Known third-party locations that may already hold whisper.cpp GGML bins
+    /// or Parakeet ONNX directories (OpenWhispr, Meetily, Hugging Face hub, …).
+    fn external_model_search_roots() -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from);
+
+        let Some(home) = home else {
+            return roots;
+        };
+
+        roots.push(home.join(".cache/openwhispr/whisper-models"));
+        roots.push(home.join(".cache/openwhispr/models"));
+        roots.push(home.join(".cache/huggingface/hub"));
+
+        #[cfg(target_os = "macos")]
+        {
+            roots.push(home.join("Library/Application Support/com.meetily.ai/models"));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
+                roots.push(appdata.join("com.meetily.ai").join("models"));
+            }
+            roots.push(home.join("AppData/Roaming/com.meetily.ai/models"));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            roots.push(home.join(".config/com.meetily.ai/models"));
+            roots.push(home.join(".local/share/com.meetily.ai/models"));
+        }
+
+        roots
+    }
+
+    /// whisper.cpp GGML magic (native or little-endian byte order).
+    fn is_ggml_whisper_bin(path: &Path) -> bool {
+        let mut file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let mut magic = [0u8; 4];
+        if file.read_exact(&mut magic).is_err() {
+            return false;
+        }
+        matches!(
+            &magic,
+            b"ggml" | b"ggmf" | b"ggjt" | b"ggj1" | // big-endian / file order
+            b"lmgg" | b"fmgg" | b"tjgg" | b"1jgg" // little-endian on disk
+        )
+    }
+
+    fn is_parakeet_model_dir(path: &Path) -> bool {
+        if !path.is_dir() {
+            return false;
+        }
+        let has_encoder = path.join("encoder-model.onnx").exists()
+            || path.join("encoder-model.int8.onnx").exists();
+        let has_vocab = path.join("vocab.txt").exists();
+        has_encoder && has_vocab
+    }
+
+    fn display_name_from_id(id: &str) -> String {
+        id.replace(['-', '_'], " ")
+            .split_whitespace()
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn path_to_string(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    /// Walk `root` up to `max_depth` and collect GGML .bin files + Parakeet dirs.
+    fn collect_external_candidates(root: &Path, max_depth: u32) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        let mut bins = Vec::new();
+        let mut dirs = Vec::new();
+        if !root.exists() {
+            return (bins, dirs);
+        }
+
+        fn walk(
+            dir: &Path,
+            depth: u32,
+            max_depth: u32,
+            bins: &mut Vec<PathBuf>,
+            dirs: &mut Vec<PathBuf>,
+        ) {
+            if depth > max_depth {
+                return;
+            }
+            let entries = match fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!("Failed to read {}: {}", dir.display(), e);
+                    return;
+                }
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with('.') {
+                    continue;
+                }
+                if path.is_dir() {
+                    if ModelManager::is_parakeet_model_dir(&path) {
+                        dirs.push(path);
+                    } else {
+                        walk(&path, depth + 1, max_depth, bins, dirs);
+                    }
+                } else if path.is_file()
+                    && name_str.ends_with(".bin")
+                    && !name_str.ends_with(".partial")
+                    && ModelManager::is_ggml_whisper_bin(&path)
+                {
+                    bins.push(path);
+                }
+            }
+        }
+
+        walk(root, 0, max_depth, &mut bins, &mut dirs);
+        (bins, dirs)
+    }
+
+    /// Bind an external path to a catalog model, or register a custom external model.
+    fn register_external_path(
+        models_dir: &Path,
+        available_models: &mut HashMap<String, ModelInfo>,
+        path: &Path,
+        is_directory: bool,
+        engine_type: EngineType,
+    ) {
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => return,
+        };
+
+        // Prefer Handy's own copy when present
+        let handy_path = models_dir.join(&name);
+        if handy_path.exists() {
+            return;
+        }
+
+        let local = Self::path_to_string(path);
+        let size_mb = if is_directory {
+            0
+        } else {
+            path.metadata().map(|m| m.len() / (1024 * 1024)).unwrap_or(0)
+        };
+
+        // Match predefined catalog by filename / directory name
+        let catalog_id = available_models
+            .iter()
+            .find(|(_, m)| {
+                !m.is_custom
+                    && m.is_directory == is_directory
+                    && std::mem::discriminant(&m.engine_type)
+                        == std::mem::discriminant(&engine_type)
+                    && m.filename == name
+            })
+            .map(|(id, _)| id.clone());
+
+        if let Some(id) = catalog_id {
+            if let Some(model) = available_models.get_mut(&id) {
+                // Don't override an already-bound path
+                if model.local_path.is_some() && model.is_downloaded {
+                    return;
+                }
+                model.local_path = Some(local.clone());
+                model.is_external = true;
+                model.is_downloaded = true;
+                if size_mb > 0 {
+                    model.size_mb = size_mb;
+                }
+                info!(
+                    "Bound external cache to catalog model '{}': {}",
+                    id, local
+                );
+            }
+            return;
+        }
+
+        // Custom external model
+        let model_id = if is_directory {
+            name.clone()
+        } else {
+            name.trim_end_matches(".bin").to_string()
+        };
+
+        if available_models.contains_key(&model_id) {
+            // Already registered (e.g. custom in models_dir) — attach path if missing
+            if let Some(model) = available_models.get_mut(&model_id) {
+                if !model.is_downloaded {
+                    model.local_path = Some(local);
+                    model.is_external = true;
+                    model.is_downloaded = true;
+                }
+            }
+            return;
+        }
+
+        info!(
+            "Discovered external {:?} model: {} ({})",
+            engine_type, model_id, local
+        );
+
+        available_models.insert(
+            model_id.clone(),
+            ModelInfo {
+                id: model_id,
+                name: Self::display_name_from_id(
+                    if is_directory {
+                        &name
+                    } else {
+                        name.trim_end_matches(".bin")
+                    },
+                ),
+                description: "External cache (not officially supported)".to_string(),
+                filename: name,
+                url: None,
+                size_mb,
+                is_downloaded: true,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory,
+                engine_type,
+                accuracy_score: 0.0,
+                speed_score: 0.0,
+                supports_translation: false,
+                is_recommended: false,
+                supported_languages: vec![],
+                is_custom: true,
+                local_path: Some(local),
+                is_external: true,
+            },
+        );
+    }
+
+    /// Scan OpenWhispr / Meetily / Hugging Face caches for usable STT models.
+    fn discover_external_models(
+        models_dir: &Path,
+        available_models: &mut HashMap<String, ModelInfo>,
+    ) -> Result<()> {
+        for root in Self::external_model_search_roots() {
+            if !root.exists() {
+                continue;
+            }
+
+            // HF hub is deep (models--*/snapshots/*); others are shallow
+            let max_depth = if root.ends_with("hub") { 5 } else { 3 };
+            let (bins, dirs) = Self::collect_external_candidates(&root, max_depth);
+
+            for bin in bins {
+                Self::register_external_path(
+                    models_dir,
+                    available_models,
+                    &bin,
+                    false,
+                    EngineType::Whisper,
+                );
+            }
+            for dir in dirs {
+                Self::register_external_path(
+                    models_dir,
+                    available_models,
+                    &dir,
+                    true,
+                    EngineType::Parakeet,
+                );
+            }
+        }
+
         Ok(())
     }
 }
@@ -1673,6 +2056,8 @@ mod tests {
                 is_recommended: false,
                 supported_languages: vec!["en".to_string()],
                 is_custom: false,
+            local_path: None,
+            is_external: false,
             },
         );
 
@@ -1807,5 +2192,205 @@ mod tests {
         
         // Clean up
         let _ = fs::remove_file(&partial_path);
+    }
+
+    fn sample_catalog_turbo() -> ModelInfo {
+        ModelInfo {
+            id: "turbo".to_string(),
+            name: "Whisper Turbo".to_string(),
+            description: "Test".to_string(),
+            filename: "ggml-large-v3-turbo.bin".to_string(),
+            url: Some("https://example.com".to_string()),
+            size_mb: 1600,
+            is_downloaded: false,
+            is_downloading: false,
+            partial_size: 0,
+            is_directory: false,
+            engine_type: EngineType::Whisper,
+            accuracy_score: 0.8,
+            speed_score: 0.4,
+            supports_translation: false,
+            is_recommended: false,
+            supported_languages: vec!["en".to_string()],
+            is_custom: false,
+            local_path: None,
+            is_external: false,
+        }
+    }
+
+    fn sample_catalog_parakeet_v3() -> ModelInfo {
+        ModelInfo {
+            id: "parakeet-tdt-0.6b-v3".to_string(),
+            name: "Parakeet V3".to_string(),
+            description: "Test".to_string(),
+            filename: "parakeet-tdt-0.6b-v3-int8".to_string(),
+            url: Some("https://example.com".to_string()),
+            size_mb: 478,
+            is_downloaded: false,
+            is_downloading: false,
+            partial_size: 0,
+            is_directory: true,
+            engine_type: EngineType::Parakeet,
+            accuracy_score: 0.8,
+            speed_score: 0.85,
+            supports_translation: false,
+            is_recommended: true,
+            supported_languages: vec!["en".to_string()],
+            is_custom: false,
+            local_path: None,
+            is_external: false,
+        }
+    }
+
+    #[test]
+    fn test_is_ggml_whisper_bin_magic() {
+        let temp_dir = TempDir::new().unwrap();
+        let ggml = temp_dir.path().join("good.bin");
+        let mut f = File::create(&ggml).unwrap();
+        f.write_all(b"lmgg").unwrap(); // LE "ggml"
+        f.write_all(&[0u8; 12]).unwrap();
+        assert!(ModelManager::is_ggml_whisper_bin(&ggml));
+
+        let ct2 = temp_dir.path().join("ct2.bin");
+        let mut f = File::create(&ct2).unwrap();
+        f.write_all(b"\x06\x00\x00\x00Whisper").unwrap();
+        assert!(!ModelManager::is_ggml_whisper_bin(&ct2));
+    }
+
+    #[test]
+    fn test_register_external_binds_catalog_and_custom() {
+        let temp = TempDir::new().unwrap();
+        let models_dir = temp.path().join("handy-models");
+        fs::create_dir_all(&models_dir).unwrap();
+        let external = temp.path().join("external");
+        fs::create_dir_all(&external).unwrap();
+
+        // Catalog-matching turbo bin
+        let turbo = external.join("ggml-large-v3-turbo.bin");
+        {
+            let mut f = File::create(&turbo).unwrap();
+            f.write_all(b"lmgg").unwrap();
+            f.write_all(&[0u8; 64]).unwrap();
+        }
+
+        // Non-catalog custom bin
+        let custom = external.join("ggml-medium-q5_0.bin");
+        {
+            let mut f = File::create(&custom).unwrap();
+            f.write_all(b"lmgg").unwrap();
+            f.write_all(&[0u8; 64]).unwrap();
+        }
+
+        // Parakeet catalog dir
+        let parakeet = external.join("parakeet-tdt-0.6b-v3-int8");
+        fs::create_dir_all(&parakeet).unwrap();
+        File::create(parakeet.join("encoder-model.int8.onnx")).unwrap();
+        File::create(parakeet.join("vocab.txt")).unwrap();
+
+        let mut models = HashMap::new();
+        models.insert("turbo".to_string(), sample_catalog_turbo());
+        models.insert(
+            "parakeet-tdt-0.6b-v3".to_string(),
+            sample_catalog_parakeet_v3(),
+        );
+
+        ModelManager::register_external_path(
+            &models_dir,
+            &mut models,
+            &turbo,
+            false,
+            EngineType::Whisper,
+        );
+        ModelManager::register_external_path(
+            &models_dir,
+            &mut models,
+            &custom,
+            false,
+            EngineType::Whisper,
+        );
+        ModelManager::register_external_path(
+            &models_dir,
+            &mut models,
+            &parakeet,
+            true,
+            EngineType::Parakeet,
+        );
+
+        let turbo_model = models.get("turbo").unwrap();
+        assert!(turbo_model.is_downloaded);
+        assert!(turbo_model.is_external);
+        assert_eq!(
+            turbo_model.local_path.as_deref(),
+            Some(turbo.to_str().unwrap())
+        );
+
+        let custom_model = models.get("ggml-medium-q5_0").unwrap();
+        assert!(custom_model.is_custom);
+        assert!(custom_model.is_external);
+        assert!(custom_model.is_downloaded);
+
+        let pk = models.get("parakeet-tdt-0.6b-v3").unwrap();
+        assert!(pk.is_downloaded);
+        assert!(pk.is_external);
+        assert_eq!(
+            pk.local_path.as_deref(),
+            Some(parakeet.to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_register_external_skips_when_handy_copy_exists() {
+        let temp = TempDir::new().unwrap();
+        let models_dir = temp.path().join("handy-models");
+        fs::create_dir_all(&models_dir).unwrap();
+        let external = temp.path().join("external");
+        fs::create_dir_all(&external).unwrap();
+
+        let handy_copy = models_dir.join("ggml-large-v3-turbo.bin");
+        File::create(&handy_copy).unwrap();
+
+        let external_bin = external.join("ggml-large-v3-turbo.bin");
+        {
+            let mut f = File::create(&external_bin).unwrap();
+            f.write_all(b"lmgg").unwrap();
+        }
+
+        let mut models = HashMap::new();
+        models.insert("turbo".to_string(), sample_catalog_turbo());
+
+        ModelManager::register_external_path(
+            &models_dir,
+            &mut models,
+            &external_bin,
+            false,
+            EngineType::Whisper,
+        );
+
+        let turbo = models.get("turbo").unwrap();
+        assert!(!turbo.is_external);
+        assert!(turbo.local_path.is_none());
+        assert!(!turbo.is_downloaded); // status updated later by update_download_status
+    }
+
+    #[test]
+    fn test_collect_external_candidates_filters_non_ggml() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("cache");
+        fs::create_dir_all(&root).unwrap();
+
+        let good = root.join("ggml-good.bin");
+        {
+            let mut f = File::create(&good).unwrap();
+            f.write_all(b"lmgg").unwrap();
+        }
+        let bad = root.join("model.bin");
+        {
+            let mut f = File::create(&bad).unwrap();
+            f.write_all(b"\x06\x00\x00\x00WhisperSpe").unwrap();
+        }
+
+        let (bins, _dirs) = ModelManager::collect_external_candidates(&root, 2);
+        assert_eq!(bins.len(), 1);
+        assert_eq!(bins[0], good);
     }
 }

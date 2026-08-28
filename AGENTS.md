@@ -109,6 +109,10 @@ Settings are stored using Tauri's store plugin with reactive updates:
 - Model preferences (Small/Medium/Turbo/Large Whisper variants)
 - Audio feedback and translation options
 
+### Model Discovery
+
+`ModelManager` loads the built-in catalog, scans `{app_data}/models/`, and also discovers compatible GGML / Parakeet files from external caches (OpenWhispr, Meetily, Hugging Face hub). External hits set `ModelInfo.local_path` / `is_external` and are loaded without copying. Details: `docs/external-model-cache.md`.
+
 ### Single Instance Architecture
 
 The app enforces single instance behavior - launching when already running brings the settings window to front rather than creating a new process.

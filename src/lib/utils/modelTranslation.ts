@@ -23,6 +23,12 @@ export function getTranslatedModelDescription(
   model: ModelInfo,
   t: TFunction,
 ): string {
+  // External cache models (OpenWhispr / Meetily / HF, etc.)
+  if (model.is_external) {
+    return t("onboarding.externalModelDescription", {
+      defaultValue: "From external cache on this Mac",
+    });
+  }
   // Custom models use a generic translation key
   if (model.is_custom) {
     return t("onboarding.customModelDescription");

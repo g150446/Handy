@@ -620,6 +620,18 @@ Handy can auto-discover custom Whisper GGML models placed in the `models` direct
 - The model must be a valid Whisper GGML format (`.bin` file)
 - Model name is derived from the filename (e.g., `my-custom-model.bin` → "My Custom Model")
 
+### External Model Caches (OpenWhispr / Meetily / Hugging Face)
+
+Handy also scans common third-party caches at startup and can use compatible models **in place** (no re-download):
+
+- **OpenWhispr** (`~/.cache/openwhispr/whisper-models/`)
+- **Meetily** (`~/Library/Application Support/com.meetily.ai/models/` on macOS)
+- **Hugging Face Hub** (`~/.cache/huggingface/hub/`) — GGML / Parakeet layouts only
+
+Matching catalog filenames (e.g. `ggml-large-v3-turbo.bin`) appear as the built-in model already downloaded, with an **External** badge. Other GGML bins show as custom external models. Deleting an external model in Handy only unbinds it; the original cache file is left intact.
+
+**Not supported:** faster-whisper / CTranslate2 or safetensors Whisper weights (e.g. many HF `kotoba-whisper` packages). See [docs/external-model-cache.md](docs/external-model-cache.md) for paths, magic checks, and limitations.
+
 ### How to Contribute
 
 1. **Check existing issues** at [github.com/cjpais/Handy/issues](https://github.com/cjpais/Handy/issues)

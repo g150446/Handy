@@ -139,7 +139,8 @@
         "checkFailed": "Failed to check permissions. Please try again.",
         "requestFailed": "Failed to request permission. Please try again."
       }
-    }
+    },
+    "externalModelDescription": "From external cache on this computer"
   },
   "modelSelector": {
     "custom": "Custom",
@@ -169,7 +170,8 @@
       "languageOnly": "{{language}} Only",
       "translation": "Can translate to English",
       "translate": "Translate to English"
-    }
+    },
+    "external": "External"
   },
   "settings": {
     "modelSettings": {
