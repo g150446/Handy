@@ -1,5 +1,8 @@
 # Control Mode BLE修正メモとUSBシリアルテスト手順
 
+> **現行仕様（更新）:** BLE double-tap（`0x12` / legacy `0x03`）は **Terminal Harbor Control Mode** のトグル。
+> 以下の本文は当時の Groq Control Mode 向け修正メモとして残している。Harbor の起動経路は `docs/harbor-control-architecture.md` を参照。
+
 ## 概要
 
 Atom Echo S3R を BLE で `Handy` に接続した状態で、control mode を終了した直後の最初の single-click が効かない不具合を修正した。

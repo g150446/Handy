@@ -407,6 +407,15 @@ pub struct AppSettings {
     /// before pasting (uses the same provider/model settings as post-processing).
     #[serde(default)]
     pub transcription_correction_enabled: bool,
+    /// Terminal Harbor HMAC pairing (server id from pair URI).
+    #[serde(default)]
+    pub harbor_server_id: Option<String>,
+    /// Terminal Harbor HMAC client id returned by `/v1/pair`.
+    #[serde(default)]
+    pub harbor_client_id: Option<String>,
+    /// Preferred Terminal Harbor bridge base URL (e.g. http://127.0.0.1:7780).
+    #[serde(default)]
+    pub harbor_base_url: Option<String>,
 }
 
 fn default_model() -> String {
@@ -795,6 +804,20 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: "escape".to_string(),
         },
     );
+    #[cfg(target_os = "macos")]
+    let default_harbor_control_shortcut = "option+shift+h";
+    #[cfg(not(target_os = "macos"))]
+    let default_harbor_control_shortcut = "ctrl+shift+h";
+    bindings.insert(
+        "harbor_control".to_string(),
+        ShortcutBinding {
+            id: "harbor_control".to_string(),
+            name: "Harbor Control Mode".to_string(),
+            description: "Toggle Terminal Harbor voice control mode.".to_string(),
+            default_binding: default_harbor_control_shortcut.to_string(),
+            current_binding: default_harbor_control_shortcut.to_string(),
+        },
+    );
 
     AppSettings {
         bindings,
@@ -843,6 +866,9 @@ pub fn get_default_settings() -> AppSettings {
         audio_source: AudioSource::default(),
         ble_device_address: None,
         transcription_correction_enabled: false,
+        harbor_server_id: None,
+        harbor_client_id: None,
+        harbor_base_url: None,
     }
 }
 

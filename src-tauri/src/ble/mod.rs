@@ -1,19 +1,22 @@
-//! BLE audio manager for the AtomEchoS3R device.
+//! BLE audio manager for HarnessNode / HarnessNode-Echo.
 //!
 //! Packet formats
 //! ──────────────
 //! Audio packet:
 //!   Byte 0   : sequence number
 //!   Byte 1   : 0xAA  (audio sync byte)
-//!   Bytes 2… : i16 LE PCM samples @ 16 kHz mono (device sends 64 samples = 128 bytes)
+//!   Bytes 2… : i16 LE PCM samples @ 16 kHz mono
 //!
-//! Event packet (3 bytes):
+//! Event packet (3+ bytes):
 //!   Byte 0   : 0x00  (reserved)
 //!   Byte 1   : 0x55  (event sync byte)
 //!   Byte 2   : event code
-//!              0x01 = recording started
+//!              0x01 = recording started (FW-owned: single tap/click or gesture)
 //!              0x02 = recording stopped
-//!              0x03 = toggle conversation mode
+//!              0x03 = legacy double tap/click (Harbor Control Mode toggle)
+//!              0x12 = double tap/click (Harbor Control Mode; no recording toggle)
+//!              0x14 = single tap/click notify (FW already toggled recording)
+//!              0x40 = operation mode status
 //!
 //! Characteristic UUIDs
 //! ─────────────────────
@@ -21,18 +24,16 @@
 //!   TX (notify, device → host) : 00000002-0000-1000-8000-00805f9b34fb
 //!   RX (write,  host → device) : 00000003-0000-1000-8000-00805f9b34fb
 //!
-//! Recording commands sent to RX
-//! ──────────────────────────────
+//! Recording commands sent to RX (host-initiated only)
+//! ────────────────────────────────────────────────────
 //!   Start : 0x01
 //!   Stop  : 0x00
 //!
-//! Device-button flow
-//! ──────────────────
-//! When the user presses the physical button on the M5Atom:
-//!   device button press   → event 0x01 → BleManager sets is_recording=true,
-//!                           calls TranscriptionCoordinator (push-to-talk press)
-//!   device button release → event 0x02 → BleManager calls TranscriptionCoordinator
-//!                           (push-to-talk release) → triggers transcription pipeline
+//! Device-initiated recording (single tap / single click / gesture)
+//! ────────────────────────────────────────────────────────────────
+//!   FW toggles mic and notifies 0x14 (tap) then 0x01 (start) or 0x02 (stop).
+//!   Handy follows 0x01/0x02 as session start/stop. Do not RX-toggle on 0x14
+//!   (avoids dual-conn races with Android).
 
 use anyhow::Result;
 use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType};
@@ -49,12 +50,45 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager as TauriManager};
 use uuid::{uuid, Uuid};
 
-pub const BLE_DEVICE_NAME: &str = "AtomEchoS3R";
+pub const BLE_DEVICE_NAME: &str = "HarnessNode";
 
 fn is_known_ble_device(name: &str) -> bool {
     name.contains("AtomEchoS3R")
         || name.contains("HarnessNode")
         || name.contains("XIAOVoice")
+}
+
+fn toggle_harbor_mode_from_ble(
+    app_handle: &tauri::AppHandle,
+    is_recording: &Arc<Mutex<bool>>,
+    device_button_active: &Arc<Mutex<bool>>,
+    discard_next_stop_event: &Arc<Mutex<bool>>,
+) {
+    let recording_was_active =
+        *is_recording.lock().unwrap() || *device_button_active.lock().unwrap();
+
+    if recording_was_active {
+        info!("BLE event: cancel recording and toggle harbor control mode");
+        *discard_next_stop_event.lock().unwrap() = true;
+        cancel_ble_recording(app_handle);
+    } else {
+        info!("BLE event: toggle harbor control mode");
+    }
+    match crate::harbor_control::toggle(app_handle) {
+        Ok(snapshot) => {
+            if snapshot.active {
+                info!(
+                    "BLE: harbor control mode active (paired={})",
+                    snapshot.paired
+                );
+            } else {
+                crate::overlay::show_normal_input_overlay(app_handle);
+            }
+        }
+        Err(err) => {
+            error!("Failed to toggle harbor control mode from BLE: {err}");
+        }
+    }
 }
 
 pub const SERVICE_UUID: Uuid = uuid!("00000001-0000-1000-8000-00805f9b34fb");
@@ -515,19 +549,19 @@ impl BleManager {
                                 } else {
                                     let control_snapshot =
                                         crate::control::get_mode_snapshot(&app_handle);
-                                    info!("BLE event: device button pressed – start recording");
+                                    info!("BLE event: recording started (0x01) – device-initiated session");
                                     // Start accumulating samples immediately.
                                     *recording_samples.lock().unwrap() = Vec::new();
                                     *is_recording.lock().unwrap() = true;
                                     *device_button_active.lock().unwrap() = true;
                                     *discard_next_stop_event.lock().unwrap() = false;
                                     debug!(
-                                        "BLE press routed as normal recording start (control_active={}, session_id={})",
+                                        "BLE session start (control_active={}, session_id={})",
                                         control_snapshot.active,
                                         control_snapshot.session_id
                                     );
 
-                                    // Trigger the transcription pipeline (push-to-talk press).
+                                    // Follow FW session (single tap/click or gesture).
                                     send_ble_button_event(&app_handle, true);
                                 }
                             }
@@ -621,53 +655,51 @@ impl BleManager {
                                 if *device_button_active.lock().unwrap() {
                                     let control_snapshot =
                                         crate::control::get_mode_snapshot(&app_handle);
-                                    info!("BLE event: device button released – stop recording");
+                                    info!("BLE event: recording stopped (0x02) – end device session");
                                     // is_recording stays true so in-flight packets are captured;
                                     // stop_recording_command() will clear it.
                                     debug!(
-                                        "BLE release routed as recording stop (control_active={}, session_id={})",
+                                        "BLE session stop (control_active={}, session_id={})",
                                         control_snapshot.active,
                                         control_snapshot.session_id
                                     );
                                     send_ble_button_event(&app_handle, false);
                                 } else {
-                                    debug!("BLE event: 0x02 ignored (no active button press)");
+                                    debug!("BLE event: 0x02 ignored (no active device session)");
                                 }
                             }
                             0x03 => {
-                                let recording_was_active = *is_recording.lock().unwrap()
-                                    || *device_button_active.lock().unwrap();
-
-                                if recording_was_active {
-                                    info!("BLE event: cancel recording and toggle control mode");
-                                    *discard_next_stop_event.lock().unwrap() = true;
-                                    cancel_ble_recording(&app_handle);
+                                // Legacy double tap/click: Harbor Control Mode toggle.
+                                toggle_harbor_mode_from_ble(
+                                    &app_handle,
+                                    &is_recording,
+                                    &device_button_active,
+                                    &discard_next_stop_event,
+                                );
+                            }
+                            0x12 => {
+                                // Double tap/click: Harbor Control Mode (no recording toggle).
+                                info!("BLE event: double_tap (0x12)");
+                                toggle_harbor_mode_from_ble(
+                                    &app_handle,
+                                    &is_recording,
+                                    &device_button_active,
+                                    &discard_next_stop_event,
+                                );
+                            }
+                            0x14 => {
+                                // Single tap/click notify. FW already toggled recording;
+                                // session start/stop follows via 0x01/0x02. Do not RX-toggle.
+                                info!("BLE event: single_tap (0x14) – awaiting 0x01/0x02 from firmware");
+                            }
+                            0x40 => {
+                                if data.len() >= 5 {
+                                    info!(
+                                        "BLE event: operation_mode effective={} pending={}",
+                                        data[3], data[4]
+                                    );
                                 } else {
-                                    info!("BLE event: toggle control mode");
-                                }
-                                match crate::control::toggle_mode(&app_handle) {
-                                    Ok(snapshot) => {
-                                        if !snapshot.active {
-                                            crate::overlay::show_normal_input_overlay(&app_handle);
-                                        } else {
-                                            // Auto-start app-initiated recording upon entering control mode.
-                                            // Ignore the immediate recording-started ACK (0x01) that the
-                                            // device emits in response to our start command. After that,
-                                            // wait for the next single-click and accept either a 0x01
-                                            // press or a direct 0x02 stop acknowledgement from firmware.
-                                            info!("BLE: control mode active – auto-starting recording");
-                                            *recording_samples.lock().unwrap() = Vec::new();
-                                            *is_recording.lock().unwrap() = true;
-                                            *control_mode_capturing.lock().unwrap() = true;
-                                            *discard_next_stop_event.lock().unwrap() = false;
-                                            *ignore_next_control_mode_start_ack.lock().unwrap() =
-                                                true;
-                                            send_ble_button_event(&app_handle, true);
-                                        }
-                                    }
-                                    Err(err) => {
-                                        error!("Failed to toggle control mode from BLE: {err}");
-                                    }
+                                    info!("BLE event: operation_mode (short packet)");
                                 }
                             }
                             0x10 => {

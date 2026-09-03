@@ -2,7 +2,9 @@
 
 ## 概要
 
-Control Mode（コントロールモード）は、音声 + Groq LLM のファンクションコールでデスクトップを操作する機能。BLE デバイスのダブルクリックで起動し、画面右上にコントロールウィンドウが表示される。
+Control Mode（コントロールモード）は、音声 + Groq LLM のファンクションコールでデスクトップを操作する機能。画面右上にコントロールウィンドウが表示される。
+
+> **Note:** HarnessNode / stick の BLE ダブルタップ（`0x12` / legacy `0x03`）は **Terminal Harbor Control Mode** のトグルに割り当てられている。Groq Control Mode の BLE 起動経路は現在ない（`docs/harbor-control-architecture.md` 参照）。
 
 ---
 

@@ -386,12 +386,22 @@ async fn correct_transcription(app: &AppHandle, transcription: &str) -> Option<S
     info!("[Correction] Calling Groq model {} ...", model);
     info!("[Correction] Input:  \"{}\"", transcription);
 
+    let mut correction_words = settings.custom_words.clone();
+    for label in crate::harbor_control::stt_context_words(app) {
+        if !correction_words
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&label))
+        {
+            correction_words.push(label);
+        }
+    }
+
     let api_call = crate::llm_client::send_chat_completion_with_schema(
         &provider,
         api_key,
         &model,
         transcription.to_string(),
-        Some(build_correction_prompt(&settings.custom_words)),
+        Some(build_correction_prompt(&correction_words)),
         None, // local models: rely on prompt instruction instead of json_schema
     );
 
@@ -623,8 +633,17 @@ impl ShortcutAction for TranscribeAction {
                                     correct_transcription(&ah, &final_text).await
                                 {
                                     post_processed_text = Some(corrected.clone());
+                                    let mut correction_words = settings.custom_words.clone();
+                                    for label in crate::harbor_control::stt_context_words(&ah) {
+                                        if !correction_words
+                                            .iter()
+                                            .any(|existing| existing.eq_ignore_ascii_case(&label))
+                                        {
+                                            correction_words.push(label);
+                                        }
+                                    }
                                     post_process_prompt =
-                                        Some(build_correction_prompt(&settings.custom_words));
+                                        Some(build_correction_prompt(&correction_words));
                                     final_text = corrected;
                                 } else if final_text != transcription {
                                     // Chinese conversion was applied but no correction
@@ -661,11 +680,29 @@ impl ShortcutAction for TranscribeAction {
                                 post_processed_text = Some(final_text.clone());
                             }
 
+                            let harbor_control_active = crate::harbor_control::is_active(&ah);
                             let control_mode_active = crate::control::get_mode_snapshot(&ah).active;
                             info!(
-                                "Transcription routing decision: control_mode_active={}",
-                                control_mode_active
+                                "Transcription routing decision: harbor_control_active={} control_mode_active={}",
+                                harbor_control_active, control_mode_active
                             );
+                            if harbor_control_active {
+                                show_processing_overlay(&ah);
+                                match crate::harbor_control::submit_transcript(&ah, final_text)
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        utils::hide_recording_overlay(&ah);
+                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                    }
+                                    Err(err) => {
+                                        error!("Failed to submit Harbor voice intent: {}", err);
+                                        utils::hide_recording_overlay(&ah);
+                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                    }
+                                }
+                                return;
+                            }
                             if control_mode_active {
                                 show_processing_overlay(&ah);
                                 match crate::control::submit_voice_prompt(&ah, final_text).await {
@@ -764,6 +801,27 @@ impl ShortcutAction for CancelAction {
     }
 }
 
+struct HarborControlAction;
+
+impl ShortcutAction for HarborControlAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        match crate::harbor_control::toggle(app) {
+            Ok(snapshot) => {
+                info!(
+                    "Harbor Control Mode toggled: active={} paired={}",
+                    snapshot.active, snapshot.paired
+                );
+                if !snapshot.active {
+                    crate::overlay::show_normal_input_overlay(app);
+                }
+            }
+            Err(err) => error!("Failed to toggle Harbor Control Mode: {err}"),
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -803,6 +861,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "cancel".to_string(),
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "harbor_control".to_string(),
+        Arc::new(HarborControlAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

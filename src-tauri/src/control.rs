@@ -72,6 +72,9 @@ pub fn get_mode_snapshot(app_handle: &AppHandle) -> ControlStateSnapshot {
     build_snapshot(app_handle, &inner)
 }
 
+/// Toggle Groq Control Mode. BLE double-tap now targets Harbor; this remains for
+/// programmatic / future entry points.
+#[allow(dead_code)]
 pub fn toggle_mode(app_handle: &AppHandle) -> Result<ControlStateSnapshot, String> {
     let next_active = !get_mode_snapshot(app_handle).active;
     set_mode(app_handle, next_active)
@@ -108,6 +111,10 @@ fn get_last_pasted_text(app: &AppHandle) -> Option<String> {
 }
 
 fn set_mode(app_handle: &AppHandle, active: bool) -> Result<ControlStateSnapshot, String> {
+    if active && crate::harbor_control::is_active(app_handle) {
+        let _ = crate::harbor_control::deactivate(app_handle);
+    }
+
     // Capture frontmost app BEFORE we take focus (macOS only)
     #[cfg(target_os = "macos")]
     if active {

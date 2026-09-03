@@ -498,9 +498,13 @@ impl TranscriptionManager {
                                 Some(normalized)
                             };
 
+                            let initial_prompt = crate::harbor_control::whisper_initial_prompt(
+                                &self.app_handle,
+                            );
                             let params = WhisperInferenceParams {
                                 language: whisper_language,
                                 translate: settings.translate_to_english,
+                                initial_prompt,
                                 ..Default::default()
                             };
 
@@ -602,11 +606,21 @@ impl TranscriptionManager {
             }
         };
 
-        // Apply word correction if custom words are configured
-        let corrected_result = if !settings.custom_words.is_empty() {
+        // Apply word correction if custom words are configured.
+        // Harbor Control Mode also injects live workspace directory/agent labels.
+        let mut correction_words = settings.custom_words.clone();
+        for label in crate::harbor_control::stt_context_words(&self.app_handle) {
+            if !correction_words
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&label))
+            {
+                correction_words.push(label);
+            }
+        }
+        let corrected_result = if !correction_words.is_empty() {
             apply_custom_words(
                 &result.text,
-                &settings.custom_words,
+                &correction_words,
                 settings.word_correction_threshold,
             )
         } else {

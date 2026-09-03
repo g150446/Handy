@@ -19,7 +19,7 @@
   },
   "control": {
     "title": "コントロールモード",
-    "subtitle": "デバイスのダブルクリックでこのモードをオン / オフできます。",
+    "subtitle": "このモードが有効な間、音声コマンドはデスクトップ操作として解釈されます。",
     "status": {
       "inactive": "停止中",
       "missingApiKey": "Groq APIキー未設定",
@@ -39,7 +39,7 @@
       "missingModel": "メッセージ送信前に、設定画面で Groq モデルを選択してください。"
     },
     "help": {
-      "toggleBack": "通常入力モードへ戻るには、デバイスをもう一度ダブルクリックしてください。"
+      "toggleBack": "通常入力モードへ戻るには、このウィンドウを閉じるかコントロールモードを終了してください。"
     },
     "inputPlaceholder": "メッセージを入力してください…",
     "send": "送信",
@@ -191,7 +191,7 @@
       },
       "conversation": {
         "title": "モードの動作",
-        "description": "会話履歴は対話モード中のメモリにのみ保持されます。もう一度ダブルクリックすると通常入力モードに戻ります。",
+        "description": "会話履歴は対話モード中のメモリにのみ保持されます。コントロールウィンドウを閉じると通常入力モードに戻ります。",
         "refreshAction": "Groq モデル一覧を更新"
       }
     },
@@ -237,6 +237,10 @@
           "transcribe_with_post_process": {
             "name": "後処理ホットキー",
             "description": "オプション：文字起こしに常にAI後処理を適用する専用ホットキー。"
+          },
+          "harbor_control": {
+            "name": "Harbor コントロールモード",
+            "description": "Terminal Harbor の音声操作を切り替えます（デバイスのダブルタップでも可）。有効中は文字起こしを貼り付けずワークスペース切替に使います。"
           }
         },
         "errors": {
@@ -256,6 +260,22 @@
       "pushToTalk": {
         "label": "プッシュトゥトーク",
         "description": "押し続けて録音、離して停止"
+      },
+      "harbor": {
+        "title": "Terminal Harbor",
+        "description": "同じ Mac では Terminal Harbor と自動でローカルペアします。URI 貼付はフォールバック用です。",
+        "placeholder": "harbor://pair?…",
+        "pair": "URI でペア",
+        "autoPair": "この Mac で接続",
+        "manualToggle": "手動 pair URI",
+        "pairing": "ペアリング中…",
+        "paired": "ペアリング済み ({{server}}…)",
+        "unpaired": "未ペアリング — Terminal Harbor を起動して接続",
+        "pairedToast": "Terminal Harbor とペアリングしました",
+        "errors": {
+          "emptyUri": "pair URI を貼り付けてください",
+          "pairFailed": "ペアリングに失敗しました: {{error}}"
+        }
       }
     },
     "sound": {
@@ -626,5 +646,30 @@
     "transcribing": "文字起こし中...",
     "processing": "処理中...",
     "normalInput": "通常入力モードに戻りました"
+  },
+  "harbor": {
+    "title": "Harbor コントロール",
+    "subtitle": "デバイスのダブルタップでこのモードをオン / オフできます。",
+    "status": {
+      "inactive": "非アクティブ",
+      "unpaired": "未ペアリング",
+      "ready": "準備完了"
+    },
+    "roles": {
+      "user": "あなた",
+      "assistant": "Harbor"
+    },
+    "directories": "音声認識用のワークスペース語彙",
+    "empty": {
+      "title": "Terminal Harbor の準備完了",
+      "description": "サイドバーのディレクトリ名・Codex / Claude を話してください。上の語彙が認識を補助します。"
+    },
+    "help": {
+      "toggleBack": "通常入力モードへ戻るには、デバイスをもう一度ダブルタップしてください。"
+    },
+    "errors": {
+      "unpaired": "この Mac で Terminal Harbor を起動してから再試行してください。"
+    },
+    "sending": "Terminal Harbor に送信中…"
   }
 }

@@ -19,7 +19,7 @@
   },
   "control": {
     "title": "Control Mode",
-    "subtitle": "Double-click the device button to toggle this mode on or off.",
+    "subtitle": "Voice commands are interpreted as desktop actions while this mode is active.",
     "status": {
       "inactive": "Inactive",
       "missingApiKey": "Missing Groq API key",
@@ -39,11 +39,36 @@
       "missingModel": "Choose a Groq model in Settings before sending a message."
     },
     "help": {
-      "toggleBack": "Double-click the device button again to return to normal input mode."
+      "toggleBack": "Close this window or deactivate control mode to return to normal input."
     },
     "inputPlaceholder": "Type your message here…",
     "send": "Send",
     "sending": "Waiting for Groq..."
+  },
+  "harbor": {
+    "title": "Harbor Control",
+    "subtitle": "Double-tap the device button to toggle Harbor Control on or off.",
+    "status": {
+      "inactive": "Inactive",
+      "unpaired": "Not paired",
+      "ready": "Ready"
+    },
+    "roles": {
+      "user": "You",
+      "assistant": "Harbor"
+    },
+    "directories": "Workspace labels for speech",
+    "empty": {
+      "title": "Ready for Terminal Harbor",
+      "description": "Say a sidebar directory name, Codex, or Claude. Labels above bias speech recognition."
+    },
+    "help": {
+      "toggleBack": "Double-tap the device button again to return to normal input mode."
+    },
+    "errors": {
+      "unpaired": "Start Terminal Harbor on this Mac, then try again."
+    },
+    "sending": "Talking to Terminal Harbor…"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -193,7 +218,7 @@
       },
       "conversation": {
         "title": "Mode Behavior",
-        "description": "Conversation history is kept only in memory while conversation mode is active. Another double-click returns Handy to normal input mode.",
+        "description": "Conversation history is kept only in memory while conversation mode is active. Closing the control window returns Handy to normal input mode.",
         "refreshAction": "Refresh Groq Models"
       }
     },
@@ -219,12 +244,32 @@
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+          },
+          "harbor_control": {
+            "name": "Harbor Control Mode",
+            "description": "Toggle Terminal Harbor voice control (also via device double-tap). While active, transcriptions switch workspaces instead of pasting."
           }
         },
         "errors": {
           "restore": "Failed to restore original shortcut",
           "set": "Failed to set shortcut: {{error}}",
           "reset": "Failed to reset shortcut to original value"
+        }
+      },
+      "harbor": {
+        "title": "Terminal Harbor",
+        "description": "On this Mac, Handy pairs automatically with Terminal Harbor over loopback. Manual pair URI is only for fallback.",
+        "placeholder": "harbor://pair?…",
+        "pair": "Pair URI",
+        "autoPair": "Connect on this Mac",
+        "manualToggle": "Manual pair URI",
+        "pairing": "Pairing…",
+        "paired": "Paired ({{server}}…)",
+        "unpaired": "Not paired — start Terminal Harbor, then Connect",
+        "pairedToast": "Paired with Terminal Harbor",
+        "errors": {
+          "emptyUri": "Paste a Terminal Harbor pair URI first",
+          "pairFailed": "Pairing failed: {{error}}"
         }
       },
       "language": {

@@ -11,6 +11,7 @@ import {
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import { ConversationWindow } from "./components/conversation/ConversationWindow";
+import { HarborControlWindow } from "./components/conversation/HarborControlWindow";
 import Footer from "./components/footer";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
@@ -189,6 +190,10 @@ function App() {
 
   if (windowLabel === "control") {
     return <ConversationWindow />;
+  }
+
+  if (windowLabel === "harbor-control") {
+    return <HarborControlWindow />;
   }
 
   return <SettingsShell />;

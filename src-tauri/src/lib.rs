@@ -8,6 +8,7 @@ pub mod cli;
 mod clipboard;
 mod commands;
 mod control;
+mod harbor_control;
 mod helpers;
 mod input;
 mod llm_client;
@@ -117,6 +118,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let ble_manager = Arc::new(crate::ble::BleManager::new(app_handle.clone()));
     app_handle.manage(ble_manager.clone());
     control::initialize(app_handle);
+    harbor_control::initialize(app_handle);
 
     {
         let ble_manager = ble_manager.clone();
@@ -336,6 +338,12 @@ pub fn run(cli_args: CliArgs) {
         commands::get_app_settings,
         commands::get_default_settings,
         control::get_control_mode,
+        harbor_control::get_harbor_control,
+        harbor_control::toggle_harbor_control,
+        harbor_control::deactivate_harbor_control,
+        harbor_control::pair_terminal_harbor,
+        harbor_control::ensure_terminal_harbor_local_pairing,
+        harbor_control::get_terminal_harbor_pairing,
         commands::get_log_dir_path,
         commands::set_log_level,
         commands::open_recordings_folder,
@@ -550,6 +558,10 @@ pub fn run(cli_args: CliArgs) {
                 api.prevent_close();
                 if window.label() == control::CONTROL_WINDOW_LABEL {
                     let _ = control::deactivate_mode(&window.app_handle());
+                    return;
+                }
+                if window.label() == harbor_control::WINDOW_LABEL {
+                    let _ = harbor_control::deactivate(&window.app_handle());
                     return;
                 }
 
