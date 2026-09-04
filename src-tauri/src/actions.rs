@@ -805,17 +805,8 @@ struct HarborControlAction;
 
 impl ShortcutAction for HarborControlAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        match crate::harbor_control::toggle(app) {
-            Ok(snapshot) => {
-                info!(
-                    "Harbor Control Mode toggled: active={} paired={}",
-                    snapshot.active, snapshot.paired
-                );
-                if !snapshot.active {
-                    crate::overlay::show_normal_input_overlay(app);
-                }
-            }
-            Err(err) => error!("Failed to toggle Harbor Control Mode: {err}"),
+        if let Err(err) = crate::preferred_control::toggle_preferred(app) {
+            error!("Failed to toggle preferred control mode: {err}");
         }
     }
 

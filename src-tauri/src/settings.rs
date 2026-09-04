@@ -15,6 +15,13 @@ pub const OPENROUTER_API_KEY_ENV_VAR: &str = "OPENROUTER_API_KEY";
 pub const GROQ_PROVIDER_ID: &str = "groq";
 pub const GROQ_DEFAULT_MODEL_ID: &str = "openai/gpt-oss-120b";
 pub const GROQ_API_KEY_ENV_VAR: &str = "GROQ_API_KEY";
+/// Local Ollama-compatible provider (default base URL localhost:11434).
+pub const CUSTOM_PROVIDER_ID: &str = "custom";
+/// Default Control Mode model on local Ollama.
+pub const OLLAMA_DEFAULT_MODEL_ID: &str = "lfm2.5:latest";
+/// Control Mode uses the custom (Ollama) provider by default.
+pub const CONTROL_PROVIDER_ID: &str = CUSTOM_PROVIDER_ID;
+pub const CONTROL_DEFAULT_MODEL_ID: &str = OLLAMA_DEFAULT_MODEL_ID;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -156,6 +163,15 @@ pub enum PasteMethod {
     ShiftInsert,
     CtrlShiftV,
     ExternalScript,
+}
+
+/// Which control surface BLE double-tap / preferred shortcut toggles.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PreferredControlMode {
+    #[default]
+    Harbor,
+    Desktop,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -416,6 +432,9 @@ pub struct AppSettings {
     /// Preferred Terminal Harbor bridge base URL (e.g. http://127.0.0.1:7780).
     #[serde(default)]
     pub harbor_base_url: Option<String>,
+    /// Control surface toggled by device double-tap and the preferred-control shortcut.
+    #[serde(default)]
+    pub preferred_control_mode: PreferredControlMode,
 }
 
 fn default_model() -> String {
@@ -575,10 +594,10 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         });
     }
 
-    // Custom provider always comes last
+    // Custom / Ollama-compatible provider always comes last
     providers.push(PostProcessProvider {
-        id: "custom".to_string(),
-        label: "Custom".to_string(),
+        id: CUSTOM_PROVIDER_ID.to_string(),
+        label: "Ollama / Custom".to_string(),
         base_url: "http://localhost:11434/v1".to_string(),
         allow_base_url_edit: true,
         models_endpoint: Some("/models".to_string()),
@@ -605,6 +624,9 @@ fn default_model_for_provider(provider_id: &str) -> String {
     }
     if provider_id == GROQ_PROVIDER_ID {
         return GROQ_DEFAULT_MODEL_ID.to_string();
+    }
+    if provider_id == CUSTOM_PROVIDER_ID {
+        return OLLAMA_DEFAULT_MODEL_ID.to_string();
     }
     String::new()
 }
@@ -812,8 +834,8 @@ pub fn get_default_settings() -> AppSettings {
         "harbor_control".to_string(),
         ShortcutBinding {
             id: "harbor_control".to_string(),
-            name: "Harbor Control Mode".to_string(),
-            description: "Toggle Terminal Harbor voice control mode.".to_string(),
+            name: "Preferred Control Mode".to_string(),
+            description: "Toggle the preferred control mode (Desktop or Harbor).".to_string(),
             default_binding: default_harbor_control_shortcut.to_string(),
             current_binding: default_harbor_control_shortcut.to_string(),
         },
@@ -869,6 +891,7 @@ pub fn get_default_settings() -> AppSettings {
         harbor_server_id: None,
         harbor_client_id: None,
         harbor_base_url: None,
+        preferred_control_mode: PreferredControlMode::default(),
     }
 }
 

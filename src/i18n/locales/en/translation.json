@@ -12,17 +12,17 @@
     "models": "Models",
     "advanced": "Advanced",
     "postProcessing": "Post Process",
-    "openrouter": "Groq",
+    "openrouter": "Desktop",
     "history": "History",
     "debug": "Debug",
     "about": "About"
   },
   "control": {
-    "title": "Control Mode",
-    "subtitle": "Voice commands are interpreted as desktop actions while this mode is active.",
+    "title": "Desktop Control",
+    "subtitle": "Voice commands become desktop actions. Say “harbor mode” to switch to Harbor Control.",
     "status": {
       "inactive": "Inactive",
-      "missingApiKey": "Missing Groq API key",
+      "missingApiKey": "Ollama not ready",
       "missingModel": "Missing model",
       "active": "Active · {{model}}"
     },
@@ -31,23 +31,23 @@
       "assistant": "Assistant"
     },
     "empty": {
-      "title": "Ready for control",
-      "description": "When control mode is active, voice commands will be interpreted as actions or conversation."
+      "title": "Ready for desktop control",
+      "description": "While active, voice commands are actions or conversation. Say “harbor” to open Harbor Control."
     },
     "errors": {
-      "missingApiKey": "Set the GROQ_API_KEY environment variable before starting a conversation.",
-      "missingModel": "Choose a Groq model in Settings before sending a message."
+      "missingApiKey": "Start Ollama on this Mac (http://localhost:11434) before using desktop control.",
+      "missingModel": "Choose an Ollama model in Settings before sending a message."
     },
     "help": {
-      "toggleBack": "Close this window or deactivate control mode to return to normal input."
+      "toggleBack": "Double-tap the device (if Desktop is preferred) or say “normal mode” to return to normal input. Say “harbor mode” for Harbor Control."
     },
     "inputPlaceholder": "Type your message here…",
     "send": "Send",
-    "sending": "Waiting for Groq..."
+    "sending": "Waiting for Ollama..."
   },
   "harbor": {
     "title": "Harbor Control",
-    "subtitle": "Double-tap the device button to toggle Harbor Control on or off.",
+    "subtitle": "Workspace voice control. Say “desktop control” to switch to Desktop Control.",
     "status": {
       "inactive": "Inactive",
       "unpaired": "Not paired",
@@ -60,10 +60,10 @@
     "directories": "Workspace labels for speech",
     "empty": {
       "title": "Ready for Terminal Harbor",
-      "description": "Say a sidebar directory name, Codex, or Claude. Labels above bias speech recognition."
+      "description": "Say a sidebar directory name, Codex, or Claude. Say “desktop control” to switch modes."
     },
     "help": {
-      "toggleBack": "Double-tap the device button again to return to normal input mode."
+      "toggleBack": "Double-tap again (if Harbor is preferred) or say “normal mode”. Say “desktop control” for Desktop Control."
     },
     "errors": {
       "unpaired": "Start Terminal Harbor on this Mac, then try again."
@@ -204,26 +204,34 @@
       "noSettingsNeeded": "This model works automatically with no configuration needed."
     },
     "openrouter": {
-      "title": "Groq Conversation",
-      "apiKey": {
-        "title": "API Key",
-        "description": "The conversation feature reads the Groq API key from your macOS environment instead of storing it in Handy.",
-        "environment": "Using the {{envVar}} environment variable for Groq authentication."
+      "title": "Desktop Control (Ollama)",
+      "endpoint": {
+        "title": "Local endpoint",
+        "description": "Desktop Control talks to a local OpenAI-compatible server (Ollama by default).",
+        "info": "Default: http://localhost:11434/v1 · model lfm2.5:latest. Start Ollama and pull the model first."
       },
       "model": {
         "title": "Conversation Model",
-        "description": "Choose which Groq model should answer in conversation mode.",
+        "description": "Choose which Ollama model should answer in Desktop Control. Default is lfm2.5:latest.",
         "placeholder": "Select or type a model name",
         "refreshModels": "Refresh models"
       },
       "conversation": {
         "title": "Mode Behavior",
-        "description": "Conversation history is kept only in memory while conversation mode is active. Closing the control window returns Handy to normal input mode.",
-        "refreshAction": "Refresh Groq Models"
+        "description": "History stays in memory while Desktop Control is active. Closing the window or saying “normal mode” returns to normal input.",
+        "refreshAction": "Refresh Ollama Models"
       }
     },
     "general": {
       "title": "General",
+      "preferredControlMode": {
+        "title": "Preferred control mode",
+        "description": "Which mode device double-tap and the control shortcut toggle. Voice can switch modes and updates this setting.",
+        "options": {
+          "harbor": "Harbor Control",
+          "desktop": "Desktop Control"
+        }
+      },
       "shortcut": {
         "title": "Handy Shortcuts",
         "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
@@ -246,8 +254,8 @@
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
           },
           "harbor_control": {
-            "name": "Harbor Control Mode",
-            "description": "Toggle Terminal Harbor voice control (also via device double-tap). While active, transcriptions switch workspaces instead of pasting."
+            "name": "Preferred Control Mode",
+            "description": "Toggle the preferred control mode (Desktop or Harbor). Same as device double-tap."
           }
         },
         "errors": {

@@ -192,6 +192,41 @@ pub async fn submit_transcript(app: &AppHandle, text: String) -> Result<(), Stri
     if text.is_empty() {
         return set_status(app, "音声入力が空です", Some("empty_transcript".into()));
     }
+
+    // Local Handy mode switches (Desktop / normal) before Harbor HTTP intent.
+    if let Some(intent) = crate::preferred_control::match_mode_switch_intent(&text) {
+        if !matches!(intent, crate::preferred_control::ModeSwitchIntent::Harbor) {
+            let label = match intent {
+                crate::preferred_control::ModeSwitchIntent::Desktop => "デスクトップ操作に切り替えました",
+                crate::preferred_control::ModeSwitchIntent::Normal => "通常入力モードに戻りました",
+                crate::preferred_control::ModeSwitchIntent::Harbor => unreachable!(),
+            };
+            let note = {
+                let state = app.state::<HarborControlState>();
+                let mut inner = state.inner.lock().unwrap();
+                if inner.active {
+                    inner.messages.push(HarborTurn {
+                        role: "user".into(),
+                        content: text.clone(),
+                    });
+                    inner.messages.push(HarborTurn {
+                        role: "assistant".into(),
+                        content: label.into(),
+                    });
+                    inner.is_sending = false;
+                    inner.last_error = None;
+                    inner.status = label.into();
+                    snapshot(app, &inner)
+                } else {
+                    snapshot(app, &inner)
+                }
+            };
+            emit(app, &note);
+            crate::preferred_control::apply_mode_switch_intent(app, intent)?;
+            return Ok(());
+        }
+    }
+
     if !paired(app) {
         let _ = ensure_local_pairing(app).await;
     } else {

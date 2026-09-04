@@ -6,7 +6,9 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
-use crate::settings::{self, ApiKeySource, GROQ_PROVIDER_ID};
+use crate::settings::{
+    self, ApiKeySource, CONTROL_DEFAULT_MODEL_ID, CONTROL_PROVIDER_ID,
+};
 
 pub const CONTROL_WINDOW_LABEL: &str = "control";
 const CONTROL_WINDOW_WIDTH: f64 = 230.0;
@@ -72,9 +74,7 @@ pub fn get_mode_snapshot(app_handle: &AppHandle) -> ControlStateSnapshot {
     build_snapshot(app_handle, &inner)
 }
 
-/// Toggle Groq Control Mode. BLE double-tap now targets Harbor; this remains for
-/// programmatic / future entry points.
-#[allow(dead_code)]
+/// Toggle Desktop Control Mode.
 pub fn toggle_mode(app_handle: &AppHandle) -> Result<ControlStateSnapshot, String> {
     let next_active = !get_mode_snapshot(app_handle).active;
     set_mode(app_handle, next_active)
@@ -82,6 +82,10 @@ pub fn toggle_mode(app_handle: &AppHandle) -> Result<ControlStateSnapshot, Strin
 
 pub fn deactivate_mode(app_handle: &AppHandle) -> Result<ControlStateSnapshot, String> {
     set_mode(app_handle, false)
+}
+
+pub fn set_mode_active(app_handle: &AppHandle, active: bool) -> Result<ControlStateSnapshot, String> {
+    set_mode(app_handle, active)
 }
 
 pub async fn submit_voice_prompt(
@@ -209,9 +213,15 @@ fn build_control_system_prompt(
     current_model: &str,
 ) -> String {
     let mut prompt = String::from(
-        "You are a voice control assistant for a desktop app called Handy.\n\
+        "You are a voice control assistant for a desktop app called Handy (Desktop Control).\n\
          Use the provided tools when the user wants to perform a control action.\n\
-         For all other requests, respond normally as a helpful assistant.",
+         For all other requests, respond normally as a helpful assistant.\n\
+         \n\
+         Mode switching:\n\
+         - Use `switch_to_harbor_control` when the user wants Harbor / Terminal Harbor mode\n\
+           (ハーバー, ハーバーモード, harbor mode, terminal harbor, etc.).\n\
+         - Use `switch_to_normal_input` when the user wants normal typing/paste mode\n\
+           (通常入力, 通常モード, normal mode, exit control, etc.).",
     );
     if let Some(text) = last_pasted {
         let preview = if text.len() > 2000 {
@@ -257,6 +267,14 @@ async fn submit_prompt(
         return Err("Control prompt is empty".to_string());
     }
 
+    // Local phrase match (no LLM) for reliable mode switches.
+    if let Some(intent) = crate::preferred_control::match_mode_switch_intent(&prompt) {
+        if !matches!(intent, crate::preferred_control::ModeSwitchIntent::Desktop) {
+            crate::preferred_control::apply_mode_switch_intent(app_handle, intent)?;
+            return Ok(get_mode_snapshot(app_handle));
+        }
+    }
+
     // Fetch downloaded models before locking state (get_available_models is sync)
     let all_models = {
         let model_manager = app_handle
@@ -273,22 +291,22 @@ async fn submit_prompt(
     let (messages_for_request, provider, api_key, model, optimistic_snapshot) = {
         let settings = settings::get_settings(app_handle);
         let provider = settings
-            .post_process_provider(GROQ_PROVIDER_ID)
+            .post_process_provider(CONTROL_PROVIDER_ID)
             .cloned()
-            .ok_or_else(|| "Groq provider is not configured".to_string())?;
+            .ok_or_else(|| "Ollama (custom) provider is not configured".to_string())?;
 
-        let resolved_api_key = settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID);
-        if resolved_api_key.value.trim().is_empty() {
-            return Err("Groq API key is not configured".to_string());
-        }
+        // Local Ollama does not require an API key.
+        let resolved_api_key =
+            settings::resolve_post_process_api_key(&settings, CONTROL_PROVIDER_ID);
 
         let model = settings
             .post_process_models
-            .get(GROQ_PROVIDER_ID)
+            .get(CONTROL_PROVIDER_ID)
             .cloned()
-            .unwrap_or_default();
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| CONTROL_DEFAULT_MODEL_ID.to_string());
         if model.trim().is_empty() {
-            return Err("Groq model is not configured".to_string());
+            return Err("Control model is not configured".to_string());
         }
 
         let current_model = settings.selected_model.clone();
@@ -356,6 +374,16 @@ async fn submit_prompt(
                 },
                 "required": ["text"]
             })),
+        ),
+        (
+            "switch_to_harbor_control".to_string(),
+            "Switch Handy into Harbor Control Mode (Terminal Harbor workspace voice control). Use for ハーバー, ハーバーモード, harbor mode, terminal harbor, etc.".to_string(),
+            None,
+        ),
+        (
+            "switch_to_normal_input".to_string(),
+            "Leave Desktop Control and return to normal input/paste mode. Use for 通常入力, normal mode, exit control, etc.".to_string(),
+            None,
         ),
     ];
 
@@ -479,6 +507,15 @@ async fn submit_prompt(
                         "select_transcription_model: missing model_id",
                     )
                 }
+            }
+            "switch_to_harbor_control" => {
+                crate::preferred_control::activate_harbor(app_handle)?;
+                // Desktop mode is off after switch; return a deactivated snapshot.
+                Ok(get_mode_snapshot(app_handle))
+            }
+            "switch_to_normal_input" => {
+                crate::preferred_control::activate_normal(app_handle)?;
+                Ok(get_mode_snapshot(app_handle))
             }
             other => {
                 log::warn!("Unknown tool call from LLM: {other}");
@@ -932,7 +969,12 @@ fn set_error_state(app_handle: &AppHandle, err: &str) -> Result<ControlStateSnap
 
 fn build_snapshot(app_handle: &AppHandle, inner: &ControlRuntimeState) -> ControlStateSnapshot {
     let settings = settings::get_settings(app_handle);
-    let api_key_source = settings::resolve_post_process_api_key(&settings, GROQ_PROVIDER_ID).source;
+    // Local Ollama needs no key; treat empty as Settings so UI does not warn.
+    let mut api_key_source =
+        settings::resolve_post_process_api_key(&settings, CONTROL_PROVIDER_ID).source;
+    if api_key_source == ApiKeySource::Missing {
+        api_key_source = ApiKeySource::Settings;
+    }
     let has_last_pasted = app_handle
         .state::<ControlModeState>()
         .last_pasted_text

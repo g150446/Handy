@@ -23,7 +23,7 @@ type ControlModeSnapshot = {
   has_last_pasted: boolean;
 };
 
-const GROQ_PROVIDER_ID = "groq";
+const CONTROL_PROVIDER_ID = "custom";
 
 const roleIcon = (role: string) => {
   if (role === "assistant") {
@@ -42,7 +42,9 @@ export const ConversationWindow = () => {
   const prevMessageCountRef = useRef<number>(0);
   const lastAssistantRef = useRef<HTMLDivElement | null>(null);
 
-  const model = settings?.post_process_models?.[GROQ_PROVIDER_ID] ?? "";
+  const model =
+    settings?.post_process_models?.[CONTROL_PROVIDER_ID]?.trim() ||
+    "lfm2.5:latest";
   const messages = mode?.messages ?? [];
   const isSending = mode?.is_sending ?? false;
   const error = mode?.last_error ?? null;
@@ -129,16 +131,12 @@ export const ConversationWindow = () => {
       return t("control.status.inactive");
     }
 
-    if (mode.api_key_source === "missing") {
-      return t("control.status.missingApiKey");
-    }
-
     if (!model.trim()) {
       return t("control.status.missingModel");
     }
 
     return t("control.status.active", { model });
-  }, [mode?.active, mode?.api_key_source, model, t]);
+  }, [mode?.active, model, t]);
 
   // Index of last assistant message for ref assignment
   const lastAssistantIndex = messages.reduce(
@@ -151,22 +149,21 @@ export const ConversationWindow = () => {
       dir={direction}
       className="h-screen flex flex-col bg-background text-text"
     >
-      <div className="border-b border-mid-gray/20 px-3 py-2 flex items-center justify-between gap-2">
-        <h1 className="text-sm font-semibold truncate">
-          {t("control.title")}
-        </h1>
-        <div className="shrink-0 rounded-full bg-mid-gray/10 px-2 py-0.5 text-xs font-medium">
-          {statusText}
+      <div className="border-b border-mid-gray/20 px-3 py-2 space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-sm font-semibold truncate">
+            {t("control.title")}
+          </h1>
+          <div className="shrink-0 rounded-full bg-mid-gray/10 px-2 py-0.5 text-xs font-medium">
+            {statusText}
+          </div>
         </div>
+        <p className="text-[11px] text-mid-gray leading-4">
+          {t("control.subtitle")}
+        </p>
       </div>
 
-      {mode?.active && mode.api_key_source === "missing" && (
-        <Alert variant="warning" className="mx-3 mt-2 rounded-lg text-xs py-2">
-          {t("control.errors.missingApiKey")}
-        </Alert>
-      )}
-
-      {mode?.active && mode.api_key_source !== "missing" && !model.trim() && (
+      {mode?.active && !model.trim() && (
         <Alert variant="warning" className="mx-3 mt-2 rounded-lg text-xs py-2">
           {t("control.errors.missingModel")}
         </Alert>
@@ -237,6 +234,12 @@ export const ConversationWindow = () => {
           </Alert>
         </div>
       )}
+
+      <div className="border-t border-mid-gray/20 px-3 py-2">
+        <p className="text-[11px] text-mid-gray leading-4">
+          {t("control.help.toggleBack")}
+        </p>
+      </div>
     </div>
   );
 };

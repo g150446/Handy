@@ -9,6 +9,7 @@ mod clipboard;
 mod commands;
 mod control;
 mod harbor_control;
+mod preferred_control;
 mod helpers;
 mod input;
 mod llm_client;
@@ -302,6 +303,7 @@ pub fn run(cli_args: CliArgs) {
         shortcut::change_debug_mode_setting,
         shortcut::change_word_correction_threshold_setting,
         shortcut::change_paste_method_setting,
+        shortcut::change_preferred_control_mode_setting,
         shortcut::get_available_typing_tools,
         shortcut::change_typing_tool_setting,
         shortcut::change_external_script_path_setting,

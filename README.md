@@ -247,43 +247,37 @@ Triggered by a separate configurable hotkey (`--toggle-post-process`), LLM post-
 
 ---
 
-## Control Mode (Voice Desktop Control)
+## Preferred Control Modes
 
-Control Mode lets you control your desktop by voice using an LLM (Groq). Once active, you can issue commands and Handy will execute them in the application you were using before.
+Handy has two mutually exclusive voice control surfaces. Settings → General → **Preferred control mode** chooses which one device double-tap and the control shortcut toggle. The preference is persisted across restarts. Saying the other mode’s name switches surfaces and updates the preference.
 
-### Activation
+| Mode | Purpose | Default engine |
+|------|---------|----------------|
+| **Desktop Control** | Undo / Enter / replace last paste, switch STT model | Local Ollama `lfm2.5:latest` |
+| **Harbor Control** | Switch Terminal Harbor workspaces by voice | Harbor bridge `:7780` |
 
-Control Mode is activated via a connected BLE device (double-click). The control window appears in the top-right corner of your screen.
+Docs: [preferred-control-mode.md](docs/preferred-control-mode.md) · [control-mode.md](docs/control-mode.md) · [harbor-control-architecture.md](docs/harbor-control-architecture.md)
 
-### Available Commands
+### Desktop Control commands
 
 | Command | Example utterances |
 |---|---|
 | Undo last input | "取り消して", "undo", "cancel that" |
 | Send Enter key | "エンターを押して", "press enter", "submit" |
 | Replace last text | "英語に直して", "fix the typo", "translate to English" |
-| **Switch STT model** | "Whisperに切り替えて", "日本語のモデルにして", "switch to Parakeet" |
+| Switch STT model | "Whisperに切り替えて", "switch to Parakeet" |
+| Switch to Harbor | "ハーバーモード", "harbor mode" |
+| Normal input | "通常入力", "normal mode" |
 
-### Switching the Transcription Model by Voice
+### Harbor Control
 
-Handy can switch its speech recognition model on the fly via a voice command. Only models that are already downloaded appear as options—the LLM will pick the best match from your installed models.
-
-**Examples:**
-
-```
-"Whisperに切り替えて"
-"日本語のモデルにして"
-"switch to the English-only model"
-"change model to Parakeet"
-```
-
-The switch takes effect immediately. The new model is persisted to settings so it survives app restarts.
+While Harbor Control is active, transcriptions are sent to Terminal Harbor (`POST /v1/voice/intent`) instead of being pasted. Say a sidebar directory name, Codex, or Claude to switch workspaces. Say “デスクトップ操作” / “desktop control” to move to Desktop Control.
 
 ### Requirements
 
-- A Groq API key configured in Settings → Post-processing
-- At least one model downloaded (Settings → Models)
-- For model switching: two or more downloaded models
+- **Desktop Control:** Ollama on `localhost:11434` with `lfm2.5:latest` (or another model in Settings → Desktop)
+- **Harbor Control:** Terminal Harbor running on this Mac (auto-pairs over loopback)
+- BLE HarnessNode optional for double-tap toggle
 
 ---
 

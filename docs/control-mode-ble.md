@@ -1,7 +1,13 @@
 # Control Mode BLE修正メモとUSBシリアルテスト手順
 
-> **現行仕様（更新）:** BLE double-tap（`0x12` / legacy `0x03`）は **Terminal Harbor Control Mode** のトグル。
-> 以下の本文は当時の Groq Control Mode 向け修正メモとして残している。Harbor の起動経路は `docs/harbor-control-architecture.md` を参照。
+> **現行仕様:** BLE double-tap（`0x12` / legacy `0x03`）は設定の **優先コントロールモード**
+> （Harbor または Desktop）をトグルする。実装は `preferred_control::toggle_preferred`。
+>
+> 全体: [`preferred-control-mode.md`](./preferred-control-mode.md)  
+> Harbor: [`harbor-control-architecture.md`](./harbor-control-architecture.md)  
+> Desktop: [`control-mode.md`](./control-mode.md)
+>
+> 以下の本文は当時の control-mode 向け BLE 修正メモとして残している。
 
 ## 概要
 

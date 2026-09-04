@@ -10,8 +10,8 @@ import { useSettings } from "@/hooks/useSettings";
 
 import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 
-const PROVIDER_ID = "groq";
-const GROQ_API_KEY_ENV_VAR = "GROQ_API_KEY";
+const PROVIDER_ID = "custom";
+const DEFAULT_MODEL = "lfm2.5:latest";
 
 export const OpenRouterSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -23,7 +23,8 @@ export const OpenRouterSettings: React.FC = () => {
     isUpdating,
   } = useSettings();
 
-  const model = settings?.post_process_models?.[PROVIDER_ID] ?? "";
+  const model =
+    settings?.post_process_models?.[PROVIDER_ID]?.trim() || DEFAULT_MODEL;
   const modelOptions = (postProcessModelOptions[PROVIDER_ID] ?? []).map(
     (value) => ({
       value,
@@ -38,16 +39,14 @@ export const OpenRouterSettings: React.FC = () => {
     <>
       <SettingsGroup title={t("settings.openrouter.title")}>
         <SettingContainer
-          title={t("settings.openrouter.apiKey.title")}
-          description={t("settings.openrouter.apiKey.description")}
+          title={t("settings.openrouter.endpoint.title")}
+          description={t("settings.openrouter.endpoint.description")}
           descriptionMode="tooltip"
           layout="stacked"
           grouped={true}
         >
           <Alert variant="info" className="rounded-lg">
-            {t("settings.openrouter.apiKey.environment", {
-              envVar: GROQ_API_KEY_ENV_VAR,
-            })}
+            {t("settings.openrouter.endpoint.info")}
           </Alert>
         </SettingContainer>
 

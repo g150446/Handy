@@ -12,17 +12,17 @@
     "models": "モデル",
     "advanced": "詳細設定",
     "postProcessing": "後処理",
-    "openrouter": "Groq",
+    "openrouter": "デスクトップ",
     "history": "履歴",
     "debug": "デバッグ",
     "about": "概要"
   },
   "control": {
-    "title": "コントロールモード",
-    "subtitle": "このモードが有効な間、音声コマンドはデスクトップ操作として解釈されます。",
+    "title": "デスクトップ操作",
+    "subtitle": "音声がデスクトップ操作になります。「ハーバーモード」で Harbor に切り替えられます。",
     "status": {
       "inactive": "停止中",
-      "missingApiKey": "Groq APIキー未設定",
+      "missingApiKey": "Ollama 未準備",
       "missingModel": "モデル未設定",
       "active": "有効 · {{model}}"
     },
@@ -31,19 +31,19 @@
       "assistant": "アシスタント"
     },
     "empty": {
-      "title": "コントロールの準備ができました",
-      "description": "コントロールモードが有効な間、音声コマンドはアクションまたは会話として解釈されます。"
+      "title": "デスクトップ操作の準備完了",
+      "description": "有効中、音声は操作または会話として解釈されます。「ハーバー」で Harbor コントロールへ。"
     },
     "errors": {
-      "missingApiKey": "対話を始める前に、GROQ_API_KEY 環境変数を設定してください。",
-      "missingModel": "メッセージ送信前に、設定画面で Groq モデルを選択してください。"
+      "missingApiKey": "デスクトップ操作の前に、この Mac で Ollama（http://localhost:11434）を起動してください。",
+      "missingModel": "メッセージ送信前に、設定画面で Ollama モデルを選択してください。"
     },
     "help": {
-      "toggleBack": "通常入力モードへ戻るには、このウィンドウを閉じるかコントロールモードを終了してください。"
+      "toggleBack": "優先がデスクトップならダブルタップ、または「通常入力」で通常モードへ。「ハーバーモード」で Harbor へ。"
     },
     "inputPlaceholder": "メッセージを入力してください…",
     "send": "送信",
-    "sending": "Groq からの応答を待っています..."
+    "sending": "Ollama からの応答を待っています..."
   },
   "onboarding": {
     "subtitle": "開始するには、文字起こしモデルを選択してください",
@@ -177,22 +177,22 @@
       "noSettingsNeeded": "このモデルは設定不要で自動的に動作します。"
     },
     "openrouter": {
-      "title": "Groq 対話",
-      "apiKey": {
-        "title": "API キー",
-        "description": "対話機能では、Handy に保存した値ではなく macOS の環境変数から Groq API キーを読み取ります。",
-        "environment": "Groq 認証には {{envVar}} 環境変数を使用します。"
+      "title": "デスクトップ操作 (Ollama)",
+      "endpoint": {
+        "title": "ローカルエンドポイント",
+        "description": "デスクトップ操作はローカルの OpenAI 互換サーバー（既定は Ollama）に接続します。",
+        "info": "既定: http://localhost:11434/v1 · モデル lfm2.5:latest。先に Ollama を起動しモデルを pull してください。"
       },
       "model": {
         "title": "対話モデル",
-        "description": "対話モードで応答に使う Groq モデルを選択します。",
+        "description": "デスクトップ操作で使う Ollama モデルを選択します。既定は lfm2.5:latest です。",
         "placeholder": "モデル名を選択または入力",
         "refreshModels": "モデル一覧を更新"
       },
       "conversation": {
         "title": "モードの動作",
-        "description": "会話履歴は対話モード中のメモリにのみ保持されます。コントロールウィンドウを閉じると通常入力モードに戻ります。",
-        "refreshAction": "Groq モデル一覧を更新"
+        "description": "履歴はデスクトップ操作中のメモリのみ。ウィンドウを閉じるか「通常入力」で通常モードに戻ります。",
+        "refreshAction": "Ollama モデル一覧を更新"
       }
     },
     "models": {
@@ -218,6 +218,14 @@
     },
     "general": {
       "title": "一般",
+      "preferredControlMode": {
+        "title": "優先コントロールモード",
+        "description": "デバイスのダブルタップとコントロール用ショートカットが切り替えるモードです。音声切替でもこの設定が更新されます。",
+        "options": {
+          "harbor": "Harbor コントロール",
+          "desktop": "デスクトップ操作"
+        }
+      },
       "shortcut": {
         "title": "Handyショートカット",
         "description": "音声録音を開始するキーボードショートカットを設定",
@@ -239,8 +247,8 @@
             "description": "オプション：文字起こしに常にAI後処理を適用する専用ホットキー。"
           },
           "harbor_control": {
-            "name": "Harbor コントロールモード",
-            "description": "Terminal Harbor の音声操作を切り替えます（デバイスのダブルタップでも可）。有効中は文字起こしを貼り付けずワークスペース切替に使います。"
+            "name": "優先コントロールモード",
+            "description": "優先コントロール（デスクトップ操作または Harbor）を切り替えます。デバイスのダブルタップと同じです。"
           }
         },
         "errors": {
@@ -649,7 +657,7 @@
   },
   "harbor": {
     "title": "Harbor コントロール",
-    "subtitle": "デバイスのダブルタップでこのモードをオン / オフできます。",
+    "subtitle": "ワークスペース音声操作。「デスクトップ操作」でデスクトップ操作へ切り替えられます。",
     "status": {
       "inactive": "非アクティブ",
       "unpaired": "未ペアリング",
@@ -662,10 +670,10 @@
     "directories": "音声認識用のワークスペース語彙",
     "empty": {
       "title": "Terminal Harbor の準備完了",
-      "description": "サイドバーのディレクトリ名・Codex / Claude を話してください。上の語彙が認識を補助します。"
+      "description": "サイドバーのディレクトリ名・Codex / Claude を話してください。「デスクトップ操作」でモード切替。"
     },
     "help": {
-      "toggleBack": "通常入力モードへ戻るには、デバイスをもう一度ダブルタップしてください。"
+      "toggleBack": "優先が Harbor ならダブルタップ、または「通常入力」で通常へ。「デスクトップ操作」でデスクトップ操作へ。"
     },
     "errors": {
       "unpaired": "この Mac で Terminal Harbor を起動してから再試行してください。"

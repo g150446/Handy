@@ -117,6 +117,14 @@ async changePasteMethodSetting(method: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async changePreferredControlModeSetting(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_preferred_control_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAvailableTypingTools() : Promise<string[]> {
     return await TAURI_INVOKE("get_available_typing_tools");
 },
@@ -851,10 +859,17 @@ audio_source?: AudioSource;
  */
 ble_device_address?: string | null; 
 /**
- * When enabled, transcriptions are automatically corrected via Groq
- * before pasting (uses the same provider/model settings as post-processing).
+  * When enabled, transcriptions are automatically corrected via Groq
+  * before pasting (uses the same provider/model settings as post-processing).
+  */
+transcription_correction_enabled?: boolean;
+harbor_server_id?: string | null;
+harbor_client_id?: string | null;
+harbor_base_url?: string | null;
+/**
+ * Control surface toggled by device double-tap and the preferred-control shortcut.
  */
-transcription_correction_enabled?: boolean }
+preferred_control_mode?: PreferredControlMode }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AudioSource = 
 /**
@@ -894,6 +909,7 @@ export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_5"
 export type OverlayPosition = "none" | "top" | "bottom"
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
+export type PreferredControlMode = "harbor" | "desktop"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }

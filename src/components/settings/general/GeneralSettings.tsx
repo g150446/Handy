@@ -12,6 +12,7 @@ import { MuteWhileRecording } from "../MuteWhileRecording";
 import { ModelSettingsCard } from "./ModelSettingsCard";
 import { BleDeviceSelector } from "../BleDeviceSelector";
 import { HarborPairing } from "../HarborPairing";
+import { PreferredControlModeSetting } from "../PreferredControlMode";
 
 export const GeneralSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -20,6 +21,7 @@ export const GeneralSettings: React.FC = () => {
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.general.title")}>
         <ShortcutInput shortcutId="transcribe" grouped={true} />
+        <PreferredControlModeSetting descriptionMode="tooltip" grouped={true} />
         <ShortcutInput shortcutId="harbor_control" grouped={true} />
         <PushToTalk descriptionMode="tooltip" grouped={true} />
         <HarborPairing descriptionMode="tooltip" grouped={true} />

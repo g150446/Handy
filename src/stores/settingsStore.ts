@@ -112,6 +112,8 @@ const settingUpdaters: {
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_method: (value) => commands.changePasteMethodSetting(value as string),
+  preferred_control_mode: (value) =>
+    commands.changePreferredControlModeSetting(value as string),
   typing_tool: (value) => commands.changeTypingToolSetting(value as string),
   external_script_path: (value) =>
     commands.changeExternalScriptPathSetting(value as string | null),

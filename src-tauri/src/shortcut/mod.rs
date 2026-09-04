@@ -21,7 +21,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::settings::{
     self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, LLMPrompt,
-    OverlayPosition, PasteMethod, ShortcutBinding, SoundTheme, TypingTool,
+    OverlayPosition, PasteMethod, PreferredControlMode, ShortcutBinding, SoundTheme, TypingTool,
     APPLE_INTELLIGENCE_DEFAULT_MODEL_ID, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
@@ -676,6 +676,24 @@ pub fn change_paste_method_setting(app: AppHandle, method: String) -> Result<(),
     };
     settings.paste_method = parsed;
     settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_preferred_control_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
+    let parsed = match mode.as_str() {
+        "harbor" => PreferredControlMode::Harbor,
+        "desktop" => PreferredControlMode::Desktop,
+        other => {
+            warn!(
+                "Invalid preferred_control_mode '{}', defaulting to harbor",
+                other
+            );
+            PreferredControlMode::Harbor
+        }
+    };
+    crate::preferred_control::set_preferred(&app, parsed);
     Ok(())
 }
 

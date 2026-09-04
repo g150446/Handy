@@ -13,8 +13,8 @@
 //!   Byte 2   : event code
 //!              0x01 = recording started (FW-owned: single tap/click or gesture)
 //!              0x02 = recording stopped
-//!              0x03 = legacy double tap/click (Harbor Control Mode toggle)
-//!              0x12 = double tap/click (Harbor Control Mode; no recording toggle)
+//!              0x03 = legacy double tap/click (preferred control mode toggle)
+//!              0x12 = double tap/click (preferred control mode; no recording toggle)
 //!              0x14 = single tap/click notify (FW already toggled recording)
 //!              0x40 = operation mode status
 //!
@@ -58,7 +58,7 @@ fn is_known_ble_device(name: &str) -> bool {
         || name.contains("XIAOVoice")
 }
 
-fn toggle_harbor_mode_from_ble(
+fn toggle_preferred_control_from_ble(
     app_handle: &tauri::AppHandle,
     is_recording: &Arc<Mutex<bool>>,
     device_button_active: &Arc<Mutex<bool>>,
@@ -68,26 +68,14 @@ fn toggle_harbor_mode_from_ble(
         *is_recording.lock().unwrap() || *device_button_active.lock().unwrap();
 
     if recording_was_active {
-        info!("BLE event: cancel recording and toggle harbor control mode");
+        info!("BLE event: cancel recording and toggle preferred control mode");
         *discard_next_stop_event.lock().unwrap() = true;
         cancel_ble_recording(app_handle);
     } else {
-        info!("BLE event: toggle harbor control mode");
+        info!("BLE event: toggle preferred control mode");
     }
-    match crate::harbor_control::toggle(app_handle) {
-        Ok(snapshot) => {
-            if snapshot.active {
-                info!(
-                    "BLE: harbor control mode active (paired={})",
-                    snapshot.paired
-                );
-            } else {
-                crate::overlay::show_normal_input_overlay(app_handle);
-            }
-        }
-        Err(err) => {
-            error!("Failed to toggle harbor control mode from BLE: {err}");
-        }
+    if let Err(err) = crate::preferred_control::toggle_preferred(app_handle) {
+        error!("Failed to toggle preferred control mode from BLE: {err}");
     }
 }
 
@@ -669,8 +657,8 @@ impl BleManager {
                                 }
                             }
                             0x03 => {
-                                // Legacy double tap/click: Harbor Control Mode toggle.
-                                toggle_harbor_mode_from_ble(
+                                // Legacy double tap/click: preferred control mode toggle.
+                                toggle_preferred_control_from_ble(
                                     &app_handle,
                                     &is_recording,
                                     &device_button_active,
@@ -678,9 +666,9 @@ impl BleManager {
                                 );
                             }
                             0x12 => {
-                                // Double tap/click: Harbor Control Mode (no recording toggle).
+                                // Double tap/click: preferred control mode (no recording toggle).
                                 info!("BLE event: double_tap (0x12)");
-                                toggle_harbor_mode_from_ble(
+                                toggle_preferred_control_from_ble(
                                     &app_handle,
                                     &is_recording,
                                     &device_button_active,
