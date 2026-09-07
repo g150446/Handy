@@ -10,18 +10,18 @@ use tauri_plugin_store::StoreExt;
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
 pub const OPENROUTER_PROVIDER_ID: &str = "openrouter";
-pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "qwen/qwen3.5-9b";
+pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "deepseek/deepseek-v4-flash-0731";
 pub const OPENROUTER_API_KEY_ENV_VAR: &str = "OPENROUTER_API_KEY";
 pub const GROQ_PROVIDER_ID: &str = "groq";
 pub const GROQ_DEFAULT_MODEL_ID: &str = "openai/gpt-oss-120b";
 pub const GROQ_API_KEY_ENV_VAR: &str = "GROQ_API_KEY";
 /// Local Ollama-compatible provider (default base URL localhost:11434).
 pub const CUSTOM_PROVIDER_ID: &str = "custom";
-/// Default Control Mode model on local Ollama.
+/// Default model for the custom / Ollama-compatible provider.
 pub const OLLAMA_DEFAULT_MODEL_ID: &str = "lfm2.5:latest";
-/// Control Mode uses the custom (Ollama) provider by default.
-pub const CONTROL_PROVIDER_ID: &str = CUSTOM_PROVIDER_ID;
-pub const CONTROL_DEFAULT_MODEL_ID: &str = OLLAMA_DEFAULT_MODEL_ID;
+/// Desktop Control uses OpenRouter by default.
+pub const CONTROL_PROVIDER_ID: &str = OPENROUTER_PROVIDER_ID;
+pub const CONTROL_DEFAULT_MODEL_ID: &str = OPENROUTER_DEFAULT_MODEL_ID;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -631,6 +631,43 @@ fn default_model_for_provider(provider_id: &str) -> String {
     String::new()
 }
 
+fn parse_shell_export(contents: &str, env_var: &str) -> Option<String> {
+    let prefix = format!("{env_var}=");
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let rest = line.strip_prefix("export ").map(str::trim).unwrap_or(line);
+        let Some(raw) = rest.strip_prefix(&prefix) else {
+            continue;
+        };
+        let value = unquote_shell_value(raw.trim());
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn unquote_shell_value(value: &str) -> String {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value.to_string()
+}
+
+fn read_zshrc_api_key(env_var: &str) -> Option<String> {
+    let home = std::env::var_os("HOME")?;
+    let contents = std::fs::read_to_string(std::path::PathBuf::from(home).join(".zshrc")).ok()?;
+    parse_shell_export(&contents, env_var)
+}
+
 fn read_env_api_key(env_var: &str) -> Option<String> {
     if let Ok(value) = std::env::var(env_var) {
         let trimmed = value.trim();
@@ -650,6 +687,12 @@ fn read_env_api_key(env_var: &str) -> Option<String> {
                     }
                 }
             }
+        }
+    }
+
+    if env_var == OPENROUTER_API_KEY_ENV_VAR {
+        if let Some(value) = read_zshrc_api_key(env_var) {
+            return Some(value);
         }
     }
 
@@ -758,6 +801,11 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
             Some(existing) => {
                 if existing.is_empty() && !default_model.is_empty() {
                     *existing = default_model.clone();
+                    changed = true;
+                } else if provider.id == OPENROUTER_PROVIDER_ID
+                    && (*existing == "qwen/qwen3.5-9b" || *existing == "lfm2.5:latest")
+                {
+                    *existing = OPENROUTER_DEFAULT_MODEL_ID.to_string();
                     changed = true;
                 }
             }
@@ -1034,5 +1082,33 @@ mod tests {
         let settings = get_default_settings();
         assert!(!settings.auto_submit);
         assert_eq!(settings.auto_submit_key, AutoSubmitKey::Enter);
+    }
+
+    #[test]
+    fn parse_shell_export_reads_quoted_and_skips_comments() {
+        let contents = r#"
+# export OPENROUTER_API_KEY=ignored
+export OTHER=nope
+OPENROUTER_API_KEY="sk-or-test"
+"#;
+        assert_eq!(
+            parse_shell_export(contents, "OPENROUTER_API_KEY").as_deref(),
+            Some("sk-or-test")
+        );
+        assert_eq!(
+            parse_shell_export("export OPENROUTER_API_KEY='abc'", "OPENROUTER_API_KEY").as_deref(),
+            Some("abc")
+        );
+        assert_eq!(parse_shell_export("", "OPENROUTER_API_KEY"), None);
+    }
+
+    #[test]
+    fn desktop_control_defaults_to_openrouter_deepseek() {
+        assert_eq!(CONTROL_PROVIDER_ID, OPENROUTER_PROVIDER_ID);
+        assert_eq!(CONTROL_DEFAULT_MODEL_ID, OPENROUTER_DEFAULT_MODEL_ID);
+        assert_eq!(
+            default_model_for_provider(OPENROUTER_PROVIDER_ID),
+            "deepseek/deepseek-v4-flash-0731"
+        );
     }
 }

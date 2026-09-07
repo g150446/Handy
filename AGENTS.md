@@ -100,7 +100,7 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri (R
 4. **Processing:** Audio sent to Whisper model for transcription
 5. **Output routing:**
    - **Harbor Control active** → `harbor_control::submit_transcript` (no paste; mode phrases intercepted first)
-   - **Desktop Control active** → `control::submit_voice_prompt` (tools via local Ollama)
+   - **Desktop Control active** → `control::submit_voice_prompt` (tools via OpenRouter)
    - **else** → paste to active application
 
 ### Preferred Control Modes
@@ -116,6 +116,7 @@ Settings are stored using Tauri's store plugin with reactive updates:
 - Model preferences (Small/Medium/Turbo/Large Whisper variants)
 - Audio feedback and translation options
 - `preferred_control_mode`, Harbor pairing fields (`harbor_*`)
+- Desktop Control / Harbor voice: OpenRouter (`OPENROUTER_API_KEY` or Settings → Desktop)
 
 ### Model Discovery
 

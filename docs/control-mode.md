@@ -2,15 +2,15 @@
 
 ## 概要
 
-**Desktop Control** は、音声 + ローカル LLM の function calling でデスクトップを操作する機能。画面右上にコントロールウィンドウ（label `control`）が表示される。
+**Desktop Control** は、音声 + OpenRouter LLM の function calling でデスクトップを操作する機能。画面右上にコントロールウィンドウ（label `control`）が表示される。
 
-旧称: Control Mode / Groq Control Mode（現在の既定 LLM は Ollama）。
+旧称: Control Mode / Groq Control Mode / Ollama Control Mode（現在の既定 LLM は OpenRouter）。
 
 | 項目 | 値 |
 |------|-----|
-| Provider | `custom`（`http://localhost:11434/v1`） |
-| Default model | `lfm2.5:latest`（`post_process_models["custom"]`） |
-| API キー | 不要（ローカル Ollama） |
+| Provider | `openrouter`（`https://openrouter.ai/api/v1`） |
+| Default model | `deepseek/deepseek-v4-flash-0731`（`post_process_models["openrouter"]`） |
+| API キー | `OPENROUTER_API_KEY`（env / launchctl / ~/.zshrc）→ Settings |
 | 起動 | `preferred_control_mode = desktop` のとき BLE ダブルタップ / 優先ショートカット。Harbor 中の音声「デスクトップ操作」でも可 |
 | Harbor へ | 音声「ハーバー」または tool `switch_to_harbor_control`（優先設定も更新） |
 
@@ -28,7 +28,7 @@
 | `src-tauri/src/managers/transcription.rs` | `TranscriptionManager::load_model()` |
 | `src-tauri/src/commands/models.rs` | `set_active_model` Tauri コマンド（参照実装） |
 | `src/components/conversation/ConversationWindow.tsx` | UI |
-| 設定 UI（Ollama モデル） | `src/components/settings/openrouter/OpenRouterSettings.tsx`（provider `custom`） |
+| 設定 UI（OpenRouter モデル / キー） | `src/components/settings/openrouter/OpenRouterSettings.tsx`（provider `openrouter`） |
 
 ---
 

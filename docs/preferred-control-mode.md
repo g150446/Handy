@@ -5,8 +5,8 @@ Handy には **2 つのコントロール面**がある。どちらも通常入�
 | | **Desktop Control（デスクトップ操作）** | **Harbor Control** |
 |--|------------------------------------------|--------------------|
 | 目的 | 直前の貼り付け操作・Enter・モデル切替など | Terminal Harbor のワークスペース切替 |
-| 実装 | `src-tauri/src/control.rs` + ローカル Ollama | `src-tauri/src/harbor_control.rs` → Harbor HTTP |
-| 既定 LLM | Ollama `lfm2.5:latest`（`custom` / `:11434`） | Harbor 側 Ollama（bridge） |
+| 実装 | `src-tauri/src/control.rs` + OpenRouter | `src-tauri/src/harbor_control.rs` → Harbor HTTP |
+| 既定 LLM | OpenRouter `deepseek/deepseek-v4-flash-0731` | Harbor 側 OpenRouter（bridge） |
 | ウィンドウ | label `control` | label `harbor-control` |
 | 貼り付け | ツール実行時はキー注入あり得る | なし（intent のみ） |
 

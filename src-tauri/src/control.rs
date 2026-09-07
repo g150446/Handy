@@ -6,9 +6,7 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
-use crate::settings::{
-    self, ApiKeySource, CONTROL_DEFAULT_MODEL_ID, CONTROL_PROVIDER_ID,
-};
+use crate::settings::{self, ApiKeySource, CONTROL_DEFAULT_MODEL_ID, CONTROL_PROVIDER_ID};
 
 pub const CONTROL_WINDOW_LABEL: &str = "control";
 const CONTROL_WINDOW_WIDTH: f64 = 230.0;
@@ -84,7 +82,10 @@ pub fn deactivate_mode(app_handle: &AppHandle) -> Result<ControlStateSnapshot, S
     set_mode(app_handle, false)
 }
 
-pub fn set_mode_active(app_handle: &AppHandle, active: bool) -> Result<ControlStateSnapshot, String> {
+pub fn set_mode_active(
+    app_handle: &AppHandle,
+    active: bool,
+) -> Result<ControlStateSnapshot, String> {
     set_mode(app_handle, active)
 }
 
@@ -235,7 +236,9 @@ fn build_control_system_prompt(
         ));
     }
     if !downloaded_models.is_empty() {
-        prompt.push_str("\n\n## Transcription Models\nThe following speech recognition models are installed:\n");
+        prompt.push_str(
+            "\n\n## Transcription Models\nThe following speech recognition models are installed:\n",
+        );
         for m in downloaded_models {
             let langs = if m.supported_languages.is_empty() {
                 "multilingual".to_string()
@@ -277,8 +280,8 @@ async fn submit_prompt(
 
     // Fetch downloaded models before locking state (get_available_models is sync)
     let all_models = {
-        let model_manager = app_handle
-            .try_state::<std::sync::Arc<crate::managers::model::ModelManager>>();
+        let model_manager =
+            app_handle.try_state::<std::sync::Arc<crate::managers::model::ModelManager>>();
         model_manager
             .map(|mm| mm.get_available_models())
             .unwrap_or_default()
@@ -293,11 +296,16 @@ async fn submit_prompt(
         let provider = settings
             .post_process_provider(CONTROL_PROVIDER_ID)
             .cloned()
-            .ok_or_else(|| "Ollama (custom) provider is not configured".to_string())?;
+            .ok_or_else(|| "OpenRouter provider is not configured".to_string())?;
 
-        // Local Ollama does not require an API key.
         let resolved_api_key =
             settings::resolve_post_process_api_key(&settings, CONTROL_PROVIDER_ID);
+        if resolved_api_key.value.trim().is_empty() {
+            return Err(
+                "OpenRouter API key is not configured. Set OPENROUTER_API_KEY or add it in Settings."
+                    .to_string(),
+            );
+        }
 
         let model = settings
             .post_process_models
@@ -409,7 +417,7 @@ async fn submit_prompt(
         ));
     }
 
-    log::info!("Sending control request to Groq with function calling (model={model})");
+    log::info!("Sending control request to OpenRouter with function calling (model={model})");
     match crate::llm_client::send_chat_with_tools(
         &provider,
         api_key,
@@ -484,8 +492,7 @@ async fn submit_prompt(
             "select_transcription_model" => {
                 if let Some(model_id) = args.get("model_id").and_then(|v| v.as_str()) {
                     let model_id = model_id.to_string();
-                    let select_message =
-                        execute_select_model_action(app_handle, model_id).await;
+                    let select_message = execute_select_model_action(app_handle, model_id).await;
                     let snapshot = {
                         let state = app_handle.state::<ControlModeState>();
                         let mut inner = state.inner.lock().unwrap();
@@ -502,10 +509,7 @@ async fn submit_prompt(
                     schedule_auto_exit(app_handle, snapshot.session_id);
                     Ok(snapshot)
                 } else {
-                    set_error_state(
-                        app_handle,
-                        "select_transcription_model: missing model_id",
-                    )
+                    set_error_state(app_handle, "select_transcription_model: missing model_id")
                 }
             }
             "switch_to_harbor_control" => {
@@ -911,8 +915,8 @@ async fn execute_select_model_action(app: &AppHandle, model_id: String) -> Strin
     let model_id_for_load = model_id.clone();
 
     log::info!("Control mode: loading model '{model_id}' via spawn_blocking");
-    let load_result = tokio::task::spawn_blocking(move || tm_arc.load_model(&model_id_for_load))
-        .await;
+    let load_result =
+        tokio::task::spawn_blocking(move || tm_arc.load_model(&model_id_for_load)).await;
 
     match load_result {
         Ok(Ok(())) => {}
@@ -969,12 +973,8 @@ fn set_error_state(app_handle: &AppHandle, err: &str) -> Result<ControlStateSnap
 
 fn build_snapshot(app_handle: &AppHandle, inner: &ControlRuntimeState) -> ControlStateSnapshot {
     let settings = settings::get_settings(app_handle);
-    // Local Ollama needs no key; treat empty as Settings so UI does not warn.
-    let mut api_key_source =
+    let api_key_source =
         settings::resolve_post_process_api_key(&settings, CONTROL_PROVIDER_ID).source;
-    if api_key_source == ApiKeySource::Missing {
-        api_key_source = ApiKeySource::Settings;
-    }
     let has_last_pasted = app_handle
         .state::<ControlModeState>()
         .last_pasted_text

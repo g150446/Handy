@@ -23,7 +23,7 @@ type ControlModeSnapshot = {
   has_last_pasted: boolean;
 };
 
-const CONTROL_PROVIDER_ID = "custom";
+const CONTROL_PROVIDER_ID = "openrouter";
 
 const roleIcon = (role: string) => {
   if (role === "assistant") {
@@ -44,7 +44,7 @@ export const ConversationWindow = () => {
 
   const model =
     settings?.post_process_models?.[CONTROL_PROVIDER_ID]?.trim() ||
-    "lfm2.5:latest";
+    "deepseek/deepseek-v4-flash-0731";
   const messages = mode?.messages ?? [];
   const isSending = mode?.is_sending ?? false;
   const error = mode?.last_error ?? null;
@@ -131,12 +131,16 @@ export const ConversationWindow = () => {
       return t("control.status.inactive");
     }
 
+    if (mode.api_key_source === "missing") {
+      return t("control.status.missingApiKey");
+    }
+
     if (!model.trim()) {
       return t("control.status.missingModel");
     }
 
     return t("control.status.active", { model });
-  }, [mode?.active, model, t]);
+  }, [mode?.active, mode?.api_key_source, model, t]);
 
   // Index of last assistant message for ref assignment
   const lastAssistantIndex = messages.reduce(
@@ -162,6 +166,12 @@ export const ConversationWindow = () => {
           {t("control.subtitle")}
         </p>
       </div>
+
+      {mode?.active && mode.api_key_source === "missing" && (
+        <Alert variant="warning" className="mx-3 mt-2 rounded-lg text-xs py-2">
+          {t("control.errors.missingApiKey")}
+        </Alert>
+      )}
 
       {mode?.active && !model.trim() && (
         <Alert variant="warning" className="mx-3 mt-2 rounded-lg text-xs py-2">

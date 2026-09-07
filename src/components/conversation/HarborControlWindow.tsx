@@ -12,12 +12,23 @@ type HarborTurn = {
   content: string;
 };
 
+type HarborControlError = {
+  code:
+    | "authentication_failed"
+    | "untrusted_response"
+    | "unreachable"
+    | "pairing_failed"
+    | "protocol_error";
+  http_status: number | null;
+  detail: string | null;
+};
+
 type HarborControlSnapshot = {
   active: boolean;
   session_id: number;
   messages: HarborTurn[];
   is_sending: boolean;
-  last_error: string | null;
+  last_error: HarborControlError | null;
   paired: boolean;
   status: string;
   directories?: string[];
@@ -42,9 +53,24 @@ export const HarborControlWindow = () => {
   const isSending = mode?.is_sending ?? false;
   const error = mode?.last_error ?? null;
 
+  const errorText = useMemo(() => {
+    if (!error) {
+      return null;
+    }
+    const message = t(`harbor.errors.${error.code}`);
+    const context = [
+      error.http_status ? `HTTP ${error.http_status}` : null,
+      error.detail,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return { message, context };
+  }, [error, t]);
+
   const refreshMode = async () => {
     try {
-      const snapshot = await invoke<HarborControlSnapshot>("get_harbor_control");
+      const snapshot =
+        await invoke<HarborControlSnapshot>("get_harbor_control");
       lastSessionIdRef.current = snapshot.session_id;
       setMode(snapshot);
     } catch (invokeError) {
@@ -200,10 +226,15 @@ export const HarborControlWindow = () => {
         )}
       </div>
 
-      {error && (
+      {errorText && (
         <div className="px-3 pb-2">
           <Alert variant="error" className="rounded-lg text-xs py-2">
-            {error}
+            <div>{errorText.message}</div>
+            {errorText.context && (
+              <div className="mt-1 break-words text-[11px] opacity-80">
+                {errorText.context}
+              </div>
+            )}
           </Alert>
         </div>
       )}

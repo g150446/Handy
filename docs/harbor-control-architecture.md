@@ -13,10 +13,10 @@ Related projects:
 
 ## Goals
 
-| Phase | Goal |
-|-------|------|
-| **Phase 1 (now)** | Handy STT controls Terminal Harbor workspace switch via `POST /v1/voice/intent` |
-| **Phase 2 (later)** | Same control plane can target other apps without rewriting Harbor |
+| Phase               | Goal                                                                            |
+| ------------------- | ------------------------------------------------------------------------------- |
+| **Phase 1 (now)**   | Handy STT controls Terminal Harbor workspace switch via `POST /v1/voice/intent` |
+| **Phase 2 (later)** | Same control plane can target other apps without rewriting Harbor               |
 
 ## Non-goals (Phase 1)
 
@@ -38,8 +38,9 @@ Handy STT (Harbor Control active)
                     ▼
               HMAC-signed POST /v1/voice/intent
                     ▼
-              Terminal Harbor bridge
-                local Ollama lfm2.5:latest + public workspace labels
+               Terminal Harbor bridge
+                 OpenRouter deepseek/deepseek-v4-flash-0731
+                 (key: OPENROUTER_API_KEY / ~/.zshrc / settings-v1.json)
                     ▼
               unambiguous switch_workspace → activate + focus window
               else no-op (ambiguous / unsupported / model_unavailable / failed)
@@ -47,15 +48,15 @@ Handy STT (Harbor Control active)
 
 ## Handy implementation
 
-| Piece | Location |
-|-------|----------|
-| HMAC pair + Keychain + voice client | `src-tauri/src/harbor_control.rs` |
-| Preferred toggle (BLE / shortcut) | `preferred_control.rs` + setting `preferred_control_mode` |
-| BLE double-tap `0x12` / `0x03` | `ble/mod.rs` → `toggle_preferred` |
-| Shortcut binding `harbor_control` | `actions.rs` → same preferred toggle |
-| Transcription routing | `actions.rs` — Harbor active → submit_transcript (mode phrases first) |
-| Settings (General) | preferred mode dropdown + pair URI + shortcut |
-| Overlay window | label `harbor-control` |
+| Piece                               | Location                                                              |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| HMAC pair + Keychain + voice client | `src-tauri/src/harbor_control.rs`                                     |
+| Preferred toggle (BLE / shortcut)   | `preferred_control.rs` + setting `preferred_control_mode`             |
+| BLE double-tap `0x12` / `0x03`      | `ble/mod.rs` → `toggle_preferred`                                     |
+| Shortcut binding `harbor_control`   | `actions.rs` → same preferred toggle                                  |
+| Transcription routing               | `actions.rs` — Harbor active → submit_transcript (mode phrases first) |
+| Settings (General)                  | preferred mode dropdown + pair URI + shortcut                         |
+| Overlay window                      | label `harbor-control`                                                |
 
 **Same-Mac default:** Handy calls `POST /v1/pair/local` on
 `http://127.0.0.1:7780` (loopback only on the Harbor side). No QR paste is
@@ -69,9 +70,18 @@ Codex/Claude aliases) into Whisper `initial_prompt` and post-STT custom-word
 correction. Saying a sidebar directory name switches that workspace when the
 match is unique.
 
-Derived device secret is stored in macOS Keychain service
-`ai.handy.terminal-harbor`. Settings keep `harbor_server_id`,
+Derived device secret is stored as URL-safe Base64 in macOS Keychain service
+`ai.handy.terminal-harbor` through the Security Framework API. Handy verifies a
+32-byte read-back before committing pairing settings. Pairing writers and signed
+requests are serialized so the Keychain secret and `harbor_client_id` cannot be
+observed from different pairing attempts. Settings keep `harbor_server_id`,
 `harbor_client_id`, `harbor_base_url`, and `preferred_control_mode`.
+
+If a signed request receives 401 without a response signature, has no usable
+Keychain key, or fails response-signature verification, same-Mac control performs
+one local re-pair and retries the failed operation once. A second authentication
+failure clears the pairing settings and prompts the user to reconnect; transport
+and signed application errors do not invalidate an otherwise valid pairing.
 
 ## Harbor side
 
@@ -81,15 +91,19 @@ API **1.7.0** `POST /v1/voice/intent` in:
 2. `terminal-harbor/wezterm-gui/src/harbor_mobile.rs`
 3. Handy client above
 
-See Harbor mobile `docs/voice-control.md` and desktop `docs/mobile-bridge.md`.
+The classifier maps spoken Japanese onto public workspace labels (`directory`,
+`name`, `id`, `agent`) and returns that label as `target`. Harbor then scores
+the target locally. `http_req` POSTs must set `Content-Length`. Voice details:
+[`harbor-model-unavailable-handoff.md`](./harbor-model-unavailable-handoff.md),
+Harbor `docs/mobile-bridge.md`, mobile `docs/voice-control.md`.
 
 ## Desktop Control vs Harbor
 
-| | Desktop Control | Harbor Control |
-|--|-----------------|----------------|
+|            | Desktop Control                                               | Harbor Control                                       |
+| ---------- | ------------------------------------------------------------- | ---------------------------------------------------- |
 | Activation | Preferred = Desktop + BLE/shortcut; voice「デスクトップ操作」 | Preferred = Harbor + BLE/shortcut; voice「ハーバー」 |
-| Execution | Local Ollama tools → frontmost app | Harbor HTTP |
-| Paste | May inject keys | Suppressed |
+| Execution  | OpenRouter tools → frontmost app                              | Harbor HTTP                                          |
+| Paste      | May inject keys                                               | Suppressed                                           |
 
 Modes are mutually exclusive. Voice switches update `preferred_control_mode`
 so the next double-tap follows the last mode you asked for.
@@ -98,7 +112,7 @@ so the next double-tap follows the last mode you asked for.
 
 - Pair URI → Keychain secret → signed `/v1/voice/intent`
 - Harbor mode: “クロードの方” / “コーデックス” switches and focuses; ambiguous no-op
-- Ollama down on Harbor → `model_unavailable`; state unchanged
+- OpenRouter down / missing key / HTTP error on Harbor → `model_unavailable`; state unchanged
 - Harbor 中「デスクトップ操作」→ Desktop Control + preferred=desktop
 - Desktop 中「ハーバー」→ Harbor + preferred=harbor
 - Normal STT still pastes when neither mode is active

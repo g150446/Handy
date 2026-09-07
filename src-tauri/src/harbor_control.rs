@@ -6,8 +6,8 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use specta::Type;
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::fmt;
+use std::future::Future;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -30,6 +30,7 @@ const WINDOW_TOP_OFFSET: f64 = 24.0;
 #[derive(Default)]
 pub struct HarborControlState {
     inner: Mutex<HarborRuntimeState>,
+    pairing: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -38,7 +39,7 @@ struct HarborRuntimeState {
     session_id: u64,
     messages: Vec<HarborTurn>,
     is_sending: bool,
-    last_error: Option<String>,
+    last_error: Option<HarborControlError>,
     status: String,
     /// Public workspace labels used for STT biasing (directory basenames first).
     stt_labels: Vec<String>,
@@ -56,10 +57,137 @@ pub struct HarborControlSnapshot {
     pub session_id: u64,
     pub messages: Vec<HarborTurn>,
     pub is_sending: bool,
-    pub last_error: Option<String>,
+    pub last_error: Option<HarborControlError>,
     pub paired: bool,
     pub status: String,
     pub directories: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum HarborControlErrorCode {
+    AuthenticationFailed,
+    UntrustedResponse,
+    Unreachable,
+    PairingFailed,
+    ProtocolError,
+}
+
+#[derive(Clone, Debug, Serialize, Type)]
+pub struct HarborControlError {
+    pub code: HarborControlErrorCode,
+    pub http_status: Option<u16>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug)]
+enum HarborClientError {
+    AuthenticationFailed {
+        status: Option<u16>,
+        detail: Option<String>,
+    },
+    UntrustedResponse {
+        status: Option<u16>,
+        detail: Option<String>,
+    },
+    Transport(String),
+    Pairing(String),
+    Protocol(String),
+}
+
+impl HarborClientError {
+    fn is_repairable_auth(&self) -> bool {
+        matches!(
+            self,
+            Self::AuthenticationFailed { .. } | Self::UntrustedResponse { .. }
+        )
+    }
+
+    fn to_control_error(&self) -> HarborControlError {
+        match self {
+            Self::AuthenticationFailed { status, detail } => HarborControlError {
+                code: HarborControlErrorCode::AuthenticationFailed,
+                http_status: *status,
+                detail: detail.clone(),
+            },
+            Self::UntrustedResponse { status, detail } => HarborControlError {
+                code: HarborControlErrorCode::UntrustedResponse,
+                http_status: *status,
+                detail: detail.clone(),
+            },
+            Self::Transport(detail) => HarborControlError {
+                code: HarborControlErrorCode::Unreachable,
+                http_status: None,
+                detail: Some(detail.clone()),
+            },
+            Self::Pairing(detail) => HarborControlError {
+                code: HarborControlErrorCode::PairingFailed,
+                http_status: None,
+                detail: Some(detail.clone()),
+            },
+            Self::Protocol(detail) => HarborControlError {
+                code: HarborControlErrorCode::ProtocolError,
+                http_status: None,
+                detail: Some(detail.clone()),
+            },
+        }
+    }
+
+    fn diagnostic_kind(&self) -> &'static str {
+        match self {
+            Self::AuthenticationFailed { .. } => "authentication_failed",
+            Self::UntrustedResponse { .. } => "untrusted_response",
+            Self::Transport(_) => "unreachable",
+            Self::Pairing(_) => "pairing_failed",
+            Self::Protocol(_) => "protocol_error",
+        }
+    }
+
+    fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::AuthenticationFailed { status, .. } | Self::UntrustedResponse { status, .. } => {
+                *status
+            }
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for HarborClientError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AuthenticationFailed { status, detail } => {
+                write!(f, "Terminal Harbor authentication failed")?;
+                write_error_context(f, *status, detail.as_deref())
+            }
+            Self::UntrustedResponse { status, detail } => {
+                write!(f, "Terminal Harbor returned an untrusted response")?;
+                write_error_context(f, *status, detail.as_deref())
+            }
+            Self::Transport(detail) => write!(f, "Terminal Harbor is unreachable: {detail}"),
+            Self::Pairing(detail) => write!(f, "Terminal Harbor pairing failed: {detail}"),
+            Self::Protocol(detail) => write!(f, "Terminal Harbor protocol error: {detail}"),
+        }
+    }
+}
+
+impl std::error::Error for HarborClientError {}
+
+fn write_error_context(
+    f: &mut fmt::Formatter<'_>,
+    status: Option<u16>,
+    detail: Option<&str>,
+) -> fmt::Result {
+    if let Some(status) = status {
+        write!(f, " (HTTP {status}")?;
+        if let Some(detail) = detail {
+            write!(f, ": {detail}")?;
+        }
+        write!(f, ")")?;
+    } else if let Some(detail) = detail {
+        write!(f, ": {detail}")?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -190,14 +318,24 @@ pub fn deactivate(app: &AppHandle) -> Result<HarborControlSnapshot, String> {
 pub async fn submit_transcript(app: &AppHandle, text: String) -> Result<(), String> {
     let text = text.trim().to_string();
     if text.is_empty() {
-        return set_status(app, "音声入力が空です", Some("empty_transcript".into()));
+        return set_status(
+            app,
+            "音声入力が空です",
+            Some(HarborControlError {
+                code: HarborControlErrorCode::ProtocolError,
+                http_status: None,
+                detail: Some("empty transcript".into()),
+            }),
+        );
     }
 
     // Local Handy mode switches (Desktop / normal) before Harbor HTTP intent.
     if let Some(intent) = crate::preferred_control::match_mode_switch_intent(&text) {
         if !matches!(intent, crate::preferred_control::ModeSwitchIntent::Harbor) {
             let label = match intent {
-                crate::preferred_control::ModeSwitchIntent::Desktop => "デスクトップ操作に切り替えました",
+                crate::preferred_control::ModeSwitchIntent::Desktop => {
+                    "デスクトップ操作に切り替えました"
+                }
                 crate::preferred_control::ModeSwitchIntent::Normal => "通常入力モードに戻りました",
                 crate::preferred_control::ModeSwitchIntent::Harbor => unreachable!(),
             };
@@ -227,11 +365,6 @@ pub async fn submit_transcript(app: &AppHandle, text: String) -> Result<(), Stri
         }
     }
 
-    if !paired(app) {
-        let _ = ensure_local_pairing(app).await;
-    } else {
-        let _ = refresh_workspace_labels(app).await;
-    }
     let optimistic = {
         let state = app.state::<HarborControlState>();
         let mut inner = state.inner.lock().unwrap();
@@ -249,7 +382,28 @@ pub async fn submit_transcript(app: &AppHandle, text: String) -> Result<(), Stri
     };
     emit(app, &optimistic);
 
-    let response = send_voice_intent(app, &text).await;
+    let mut recovery_used = false;
+    let labels_result =
+        with_pairing_recovery(app, &mut recovery_used, || refresh_workspace_labels(app)).await;
+    let response = match labels_result {
+        Ok(_) => {
+            with_pairing_recovery(app, &mut recovery_used, || send_voice_intent(app, &text)).await
+        }
+        Err(err)
+            if matches!(
+                err,
+                HarborClientError::AuthenticationFailed { .. }
+                    | HarborClientError::UntrustedResponse { .. }
+                    | HarborClientError::Pairing(_)
+            ) =>
+        {
+            Err(err)
+        }
+        Err(err) => {
+            log::warn!("Terminal Harbor workspace labels could not be refreshed: {err}");
+            with_pairing_recovery(app, &mut recovery_used, || send_voice_intent(app, &text)).await
+        }
+    };
     let final_snapshot = {
         let state = app.state::<HarborControlState>();
         let mut inner = state.inner.lock().unwrap();
@@ -261,16 +415,21 @@ pub async fn submit_transcript(app: &AppHandle, text: String) -> Result<(), Stri
                     content: response.message.clone(),
                 });
                 inner.status = status_for_outcome(&response.outcome);
-                if response.outcome != "executed" {
-                    inner.last_error = Some(response.outcome);
-                } else {
-                    inner.last_error = None;
-                }
+                inner.last_error = None;
             }
             Err(err) => {
-                let message = err.to_string();
-                inner.last_error = Some(message.clone());
-                inner.status = "接続エラー".into();
+                let control_error = err.to_control_error();
+                inner.status = if matches!(
+                    control_error.code,
+                    HarborControlErrorCode::AuthenticationFailed
+                        | HarborControlErrorCode::UntrustedResponse
+                        | HarborControlErrorCode::PairingFailed
+                ) {
+                    "認証エラー".into()
+                } else {
+                    "接続エラー".into()
+                };
+                inner.last_error = Some(control_error);
                 inner.messages.push(HarborTurn {
                     role: "assistant".into(),
                     content: "Terminal Harbor を操作できませんでした".into(),
@@ -288,13 +447,17 @@ fn status_for_outcome(outcome: &str) -> String {
         "executed" => "切替成功".into(),
         "ambiguous" => "候補が曖昧".into(),
         "unsupported" => "未対応の命令".into(),
-        "model_unavailable" => "Ollama 未起動 / モデル不可".into(),
+        "model_unavailable" => "OpenRouter 応答なし / キー不可".into(),
         "failed" => "失敗".into(),
         other => other.to_string(),
     }
 }
 
-fn set_status(app: &AppHandle, message: &str, error: Option<String>) -> Result<(), String> {
+fn set_status(
+    app: &AppHandle,
+    message: &str,
+    error: Option<HarborControlError>,
+) -> Result<(), String> {
     let snapshot = {
         let state = app.state::<HarborControlState>();
         let mut inner = state.inner.lock().unwrap();
@@ -312,6 +475,120 @@ fn paired(app: &AppHandle) -> bool {
     current.harbor_server_id.is_some()
         && current.harbor_client_id.is_some()
         && current.harbor_base_url.is_some()
+}
+
+fn can_auto_repair_locally(app: &AppHandle) -> bool {
+    let current = settings::get_settings(app);
+    let Some(base_url) = current.harbor_base_url else {
+        return true;
+    };
+    reqwest::Url::parse(&base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .map(|host| {
+            host.eq_ignore_ascii_case("localhost")
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .map(|ip| ip.is_loopback())
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PairingMarker {
+    server_id: Option<String>,
+    client_id: Option<String>,
+    base_url: Option<String>,
+}
+
+fn pairing_marker(app: &AppHandle) -> PairingMarker {
+    let current = settings::get_settings(app);
+    PairingMarker {
+        server_id: current.harbor_server_id,
+        client_id: current.harbor_client_id,
+        base_url: current.harbor_base_url,
+    }
+}
+
+fn invalidate_pairing(app: &AppHandle, expected: &PairingMarker) {
+    let mut current = settings::get_settings(app);
+    let actual = PairingMarker {
+        server_id: current.harbor_server_id.clone(),
+        client_id: current.harbor_client_id.clone(),
+        base_url: current.harbor_base_url.clone(),
+    };
+    if &actual != expected {
+        return;
+    }
+    current.harbor_server_id = None;
+    current.harbor_client_id = None;
+    current.harbor_base_url = None;
+    settings::write_settings(app, current);
+    app.state::<HarborControlState>()
+        .inner
+        .lock()
+        .unwrap()
+        .stt_labels
+        .clear();
+}
+
+fn claim_auth_recovery(error: &HarborClientError, recovery_used: &mut bool) -> bool {
+    if error.is_repairable_auth() && !*recovery_used {
+        *recovery_used = true;
+        true
+    } else {
+        false
+    }
+}
+
+async fn with_pairing_recovery<T, F, Fut>(
+    app: &AppHandle,
+    recovery_used: &mut bool,
+    mut operation: F,
+) -> Result<T, HarborClientError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, HarborClientError>>,
+{
+    let first_pairing = pairing_marker(app);
+    match operation().await {
+        Ok(value) => Ok(value),
+        Err(first_error) if claim_auth_recovery(&first_error, recovery_used) => {
+            log::warn!(
+                "Terminal Harbor authentication failed; attempting one local repair (kind={}, status={:?})",
+                first_error.diagnostic_kind(),
+                first_error.http_status()
+            );
+            if !can_auto_repair_locally(app) {
+                invalidate_pairing(app, &first_pairing);
+                return Err(first_error);
+            }
+            if let Err(err) = ensure_local_pairing_inner(app).await {
+                invalidate_pairing(app, &first_pairing);
+                return Err(HarborClientError::Pairing(err.to_string()));
+            }
+            let repaired_pairing = pairing_marker(app);
+            match operation().await {
+                Ok(value) => {
+                    log::info!("Terminal Harbor pairing recovered successfully");
+                    Ok(value)
+                }
+                Err(second_error) => {
+                    if second_error.is_repairable_auth() {
+                        invalidate_pairing(app, &repaired_pairing);
+                    }
+                    Err(second_error)
+                }
+            }
+        }
+        Err(error) => {
+            if error.is_repairable_auth() {
+                invalidate_pairing(app, &first_pairing);
+            }
+            Err(error)
+        }
+    }
 }
 
 fn snapshot(app: &AppHandle, inner: &HarborRuntimeState) -> HarborControlSnapshot {
@@ -355,9 +632,8 @@ pub fn whisper_initial_prompt(app: &AppHandle) -> Option<String> {
         return None;
     }
     // Whisper treats this as preceding text; keep it short and name-heavy.
-    let mut prompt = String::from(
-        "Terminal Harbor workspaces and agents (prefer these spellings): ",
-    );
+    let mut prompt =
+        String::from("Terminal Harbor workspaces and agents (prefer these spellings): ");
     prompt.push_str(&words.join(", "));
     prompt.push('.');
     Some(prompt)
@@ -464,7 +740,13 @@ fn hmac_value(key: &[u8], value: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
 }
 
-fn canonical_request(method: &str, path: &str, timestamp: &str, nonce: &str, body: &[u8]) -> String {
+fn canonical_request(
+    method: &str,
+    path: &str,
+    timestamp: &str,
+    nonce: &str,
+    body: &[u8],
+) -> String {
     format!(
         "TH-HMAC-V1\n{}\n{}\n{}\n{}\n{}",
         method.to_ascii_uppercase(),
@@ -482,7 +764,8 @@ fn derive_device_key(token: &str, server_id: &str, client_id: &str, nonce: &[u8]
     info.push(0);
     info.extend_from_slice(nonce);
     let mut key = vec![0u8; 32];
-    hk.expand(&info, &mut key).expect("valid HKDF output length");
+    hk.expand(&info, &mut key)
+        .expect("valid HKDF output length");
     key
 }
 
@@ -561,8 +844,58 @@ fn candidate_base_urls(uri: &reqwest::Url) -> Vec<String> {
 
 async fn http_client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(20))
         .build()?)
+}
+
+fn safe_error_detail(body: &[u8]) -> Option<String> {
+    let candidate = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("error")?.as_str().map(str::to_owned))
+        .unwrap_or_else(|| String::from_utf8_lossy(body).into_owned());
+    let sanitized: String = candidate
+        .trim()
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .take(160)
+        .collect();
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
+fn validate_signed_response(
+    response_key: &[u8],
+    request_nonce: &str,
+    status: u16,
+    response_body: &[u8],
+    response_signature: Option<&str>,
+) -> Result<(), HarborClientError> {
+    let detail = safe_error_detail(response_body);
+    let Some(response_signature) = response_signature else {
+        return Err(if status == 401 {
+            HarborClientError::AuthenticationFailed {
+                status: Some(status),
+                detail,
+            }
+        } else {
+            HarborClientError::UntrustedResponse {
+                status: Some(status),
+                detail,
+            }
+        });
+    };
+    if !response_signature_valid(
+        response_key,
+        request_nonce,
+        status,
+        response_body,
+        response_signature,
+    ) {
+        return Err(HarborClientError::UntrustedResponse {
+            status: Some(status),
+            detail,
+        });
+    }
+    Ok(())
 }
 
 async fn signed_request(
@@ -573,19 +906,25 @@ async fn signed_request(
     signing_key: &[u8],
     response_key: &[u8],
     client_id: Option<&str>,
-) -> anyhow::Result<(u16, Vec<u8>)> {
+) -> Result<(u16, Vec<u8>), HarborClientError> {
     let timestamp = now_unix().to_string();
     let nonce = URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes());
     let signature = hmac_value(
         signing_key,
         canonical_request(method, path, &timestamp, &nonce, &body).as_bytes(),
     );
-    let client = http_client().await?;
+    let client = http_client()
+        .await
+        .map_err(|err| HarborClientError::Transport(err.to_string()))?;
     let url = format!("{}{path}", base_url.trim_end_matches('/'));
     let mut request = match method {
         "GET" => client.get(url),
         "POST" => client.post(url),
-        other => anyhow::bail!("unsupported method {other}"),
+        other => {
+            return Err(HarborClientError::Protocol(format!(
+                "unsupported method {other}"
+            )))
+        }
     };
     request = request
         .header("Accept", "application/json")
@@ -600,19 +939,28 @@ async fn signed_request(
             .header("Content-Type", "application/json")
             .body(body);
     }
-    let response = request.send().await?;
+    let response = request
+        .send()
+        .await
+        .map_err(|err| HarborClientError::Transport(err.to_string()))?;
     let status = response.status().as_u16();
     let response_signature = response
         .headers()
         .get("x-harbor-response-signature")
         .and_then(|value| value.to_str().ok())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("Terminal Harbor returned an unsigned response"))?;
-    let response_body = response.bytes().await?.to_vec();
-    if !response_signature_valid(response_key, &nonce, status, &response_body, &response_signature)
-    {
-        anyhow::bail!("Terminal Harbor response signature is invalid");
-    }
+        .map(str::to_string);
+    let response_body = response
+        .bytes()
+        .await
+        .map_err(|err| HarborClientError::Transport(err.to_string()))?
+        .to_vec();
+    validate_signed_response(
+        response_key,
+        &nonce,
+        status,
+        &response_body,
+        response_signature.as_deref(),
+    )?;
     Ok((status, response_body))
 }
 
@@ -623,7 +971,7 @@ async fn signed_post(
     signing_key: &[u8],
     response_key: &[u8],
     client_id: Option<&str>,
-) -> anyhow::Result<(u16, Vec<u8>)> {
+) -> Result<(u16, Vec<u8>), HarborClientError> {
     signed_request(
         "POST",
         base_url,
@@ -636,18 +984,31 @@ async fn signed_post(
     .await
 }
 
-async fn refresh_workspace_labels(app: &AppHandle) -> anyhow::Result<Vec<String>> {
+async fn refresh_workspace_labels(app: &AppHandle) -> Result<Vec<String>, HarborClientError> {
+    let state = app.state::<HarborControlState>();
+    let _pairing_guard = state.pairing.lock().await;
     let current = settings::get_settings(app);
-    let server_id = current
-        .harbor_server_id
-        .context("Terminal Harbor is not paired")?;
-    let client_id = current
-        .harbor_client_id
-        .context("Terminal Harbor is not paired")?;
+    let server_id =
+        current
+            .harbor_server_id
+            .ok_or_else(|| HarborClientError::AuthenticationFailed {
+                status: None,
+                detail: Some("pairing credentials are missing".into()),
+            })?;
+    let client_id =
+        current
+            .harbor_client_id
+            .ok_or_else(|| HarborClientError::AuthenticationFailed {
+                status: None,
+                detail: Some("pairing credentials are missing".into()),
+            })?;
     let base_url = current
         .harbor_base_url
         .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
-    let key = load_secret(&server_id)?;
+    let key = load_secret(&server_id).map_err(|_| HarborClientError::AuthenticationFailed {
+        status: None,
+        detail: Some("pairing key is missing or invalid".into()),
+    })?;
     let (status, body) = signed_request(
         "GET",
         &base_url,
@@ -659,10 +1020,13 @@ async fn refresh_workspace_labels(app: &AppHandle) -> anyhow::Result<Vec<String>
     )
     .await?;
     if status != 200 {
-        anyhow::bail!("listing workspaces returned HTTP {status}");
+        return Err(HarborClientError::Protocol(format!(
+            "listing workspaces returned HTTP {status}: {}",
+            safe_error_detail(&body).unwrap_or_else(|| "unknown error".into())
+        )));
     }
-    let parsed: WorkspacesResponse =
-        serde_json::from_slice(&body).context("parsing workspace list")?;
+    let parsed: WorkspacesResponse = serde_json::from_slice(&body)
+        .map_err(|err| HarborClientError::Protocol(format!("parsing workspace list: {err}")))?;
     let labels = labels_from_workspaces(&parsed.workspaces);
     {
         let state = app.state::<HarborControlState>();
@@ -681,7 +1045,10 @@ async fn fetch_identity(base_url: &str) -> anyhow::Result<IdentityResponse> {
         .await
         .context("Terminal Harbor is not reachable on loopback")?;
     if !response.status().is_success() {
-        anyhow::bail!("Terminal Harbor identity returned HTTP {}", response.status());
+        anyhow::bail!(
+            "Terminal Harbor identity returned HTTP {}",
+            response.status()
+        );
     }
     response
         .json::<IdentityResponse>()
@@ -723,8 +1090,8 @@ async fn pair_local_inner(app: &AppHandle) -> anyhow::Result<HarborPairStatus> {
     if status != 200 {
         anyhow::bail!("local pairing rejected with HTTP {status}");
     }
-    let parsed: LocalPairResponse = serde_json::from_slice(&response_body)
-        .context("parsing local pair response")?;
+    let parsed: LocalPairResponse =
+        serde_json::from_slice(&response_body).context("parsing local pair response")?;
     if parsed.server_id != identity.server_id {
         anyhow::bail!("local pair response came from a different Terminal Harbor");
     }
@@ -734,8 +1101,13 @@ async fn pair_local_inner(app: &AppHandle) -> anyhow::Result<HarborPairStatus> {
         &parsed.client_id,
         &client_nonce,
     );
-    if !response_signature_valid(&key, &request_nonce, status, &response_body, &response_signature)
-    {
+    if !response_signature_valid(
+        &key,
+        &request_nonce,
+        status,
+        &response_body,
+        &response_signature,
+    ) {
         anyhow::bail!("local pair response signature is invalid");
     }
     save_secret(&parsed.server_id, &key)?;
@@ -802,33 +1174,50 @@ async fn existing_pairing_still_valid(app: &AppHandle, server_id: &str) -> bool 
         return false;
     };
     status == 200
-        && response_signature_valid(
-            &key,
-            &nonce,
-            status,
-            &response_body,
-            &response_signature,
-        )
+        && response_signature_valid(&key, &nonce, status, &response_body, &response_signature)
 }
 
 pub async fn ensure_local_pairing(app: &AppHandle) -> Result<HarborPairStatus, String> {
     let result = ensure_local_pairing_inner(app).await;
     let status = match &result {
         Ok(status) => {
-            let _ = refresh_workspace_labels(app).await;
+            let validated_pairing = pairing_marker(app);
+            let labels_result = refresh_workspace_labels(app).await;
+            if let Err(err) = &labels_result {
+                if err.is_repairable_auth() {
+                    invalidate_pairing(app, &validated_pairing);
+                }
+            }
             let snap = {
                 let state = app.state::<HarborControlState>();
                 let mut inner = state.inner.lock().unwrap();
                 let count = inner.stt_labels.len();
-                inner.status = if count == 0 {
-                    "接続済み · 認識待ち".into()
-                } else {
-                    format!("接続済み · 語彙 {count} 件")
-                };
-                inner.last_error = None;
+                match &labels_result {
+                    Ok(_) => {
+                        inner.status = if count == 0 {
+                            "接続済み · 認識待ち".into()
+                        } else {
+                            format!("接続済み · 語彙 {count} 件")
+                        };
+                        inner.last_error = None;
+                    }
+                    Err(err) if err.is_repairable_auth() => {
+                        inner.status = "認証エラー".into();
+                        inner.last_error = Some(err.to_control_error());
+                    }
+                    Err(err) => {
+                        inner.status = "接続済み · 語彙取得失敗".into();
+                        inner.last_error = Some(err.to_control_error());
+                    }
+                }
                 snapshot(app, &inner)
             };
             emit(app, &snap);
+            if let Err(err) = labels_result {
+                if err.is_repairable_auth() {
+                    return Err(err.to_string());
+                }
+            }
             status.clone()
         }
         Err(err) => {
@@ -841,7 +1230,15 @@ pub async fn ensure_local_pairing(app: &AppHandle) -> Result<HarborPairStatus, S
                 } else {
                     "自動ペア失敗".into()
                 };
-                inner.last_error = Some(message.clone());
+                inner.last_error = Some(HarborControlError {
+                    code: if message.contains("not reachable") {
+                        HarborControlErrorCode::Unreachable
+                    } else {
+                        HarborControlErrorCode::PairingFailed
+                    },
+                    http_status: None,
+                    detail: Some(message.clone()),
+                });
                 snapshot(app, &inner)
             };
             emit(app, &snap);
@@ -852,6 +1249,8 @@ pub async fn ensure_local_pairing(app: &AppHandle) -> Result<HarborPairStatus, S
 }
 
 async fn ensure_local_pairing_inner(app: &AppHandle) -> anyhow::Result<HarborPairStatus> {
+    let state = app.state::<HarborControlState>();
+    let _pairing_guard = state.pairing.lock().await;
     let identity = fetch_identity(DEFAULT_BASE_URL).await?;
     let current = settings::get_settings(app);
     if current.harbor_server_id.as_deref() == Some(identity.server_id.as_str())
@@ -860,7 +1259,9 @@ async fn ensure_local_pairing_inner(app: &AppHandle) -> anyhow::Result<HarborPai
         return Ok(HarborPairStatus {
             paired: true,
             server_id: Some(identity.server_id),
-            base_url: current.harbor_base_url.or_else(|| Some(DEFAULT_BASE_URL.to_string())),
+            base_url: current
+                .harbor_base_url
+                .or_else(|| Some(DEFAULT_BASE_URL.to_string())),
         });
     }
     pair_local_inner(app).await
@@ -868,50 +1269,44 @@ async fn ensure_local_pairing_inner(app: &AppHandle) -> anyhow::Result<HarborPai
 
 #[cfg(target_os = "macos")]
 fn save_secret(server_id: &str, secret: &[u8]) -> anyhow::Result<()> {
-    let mut child = Command::new("/usr/bin/security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-a",
-            server_id,
-            "-w",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .take()
-        .context("opening Keychain input")?
-        .write_all(URL_SAFE_NO_PAD.encode(secret).as_bytes())?;
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        anyhow::bail!("saving Terminal Harbor key in Keychain failed");
+    if secret.len() != 32 {
+        anyhow::bail!("Terminal Harbor pairing key has an invalid length");
+    }
+    let encoded = URL_SAFE_NO_PAD.encode(secret);
+    security_framework::passwords::set_generic_password(
+        KEYCHAIN_SERVICE,
+        server_id,
+        encoded.as_bytes(),
+    )
+    .map_err(|_| anyhow!("saving Terminal Harbor key in Keychain failed"))?;
+    let persisted = load_secret(server_id)?;
+    if persisted != secret {
+        anyhow::bail!("verifying Terminal Harbor key in Keychain failed");
     }
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 fn load_secret(server_id: &str) -> anyhow::Result<Vec<u8>> {
-    let output = Command::new("/usr/bin/security")
-        .args([
-            "find-generic-password",
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-a",
-            server_id,
-            "-w",
-        ])
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!("Terminal Harbor pairing key is missing from Keychain");
+    let stored = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, server_id)
+        .map_err(|_| anyhow!("Terminal Harbor pairing key is missing from Keychain"))?;
+    decode_stored_secret(&stored)
+}
+
+fn decode_stored_secret(stored: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let encoded = std::str::from_utf8(stored)
+        .context("decoding Terminal Harbor pairing key")?
+        .trim();
+    if encoded.is_empty() {
+        anyhow::bail!("Terminal Harbor pairing key is empty");
     }
-    URL_SAFE_NO_PAD
-        .decode(String::from_utf8(output.stdout)?.trim())
-        .context("decoding Terminal Harbor pairing key")
+    let decoded = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .context("decoding Terminal Harbor pairing key")?;
+    if decoded.len() != 32 {
+        anyhow::bail!("Terminal Harbor pairing key has an invalid length");
+    }
+    Ok(decoded)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -925,16 +1320,19 @@ fn load_secret(_server_id: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 async fn pair_inner(app: &AppHandle, raw_uri: &str) -> anyhow::Result<HarborPairStatus> {
+    let state = app.state::<HarborControlState>();
+    let _pairing_guard = state.pairing.lock().await;
     let uri = reqwest::Url::parse(raw_uri.trim()).context("invalid Terminal Harbor pair URI")?;
     if uri.scheme() != "harbor" || uri.host_str() != Some("pair") {
         anyhow::bail!("not a Terminal Harbor pair URI");
     }
-    let query: std::collections::HashMap<String, String> =
-        uri.query_pairs().into_owned().collect();
+    let query: std::collections::HashMap<String, String> = uri.query_pairs().into_owned().collect();
     if query.get("auth").map(String::as_str) != Some(AUTH_VERSION) {
         anyhow::bail!("pair URI does not use HMAC authentication");
     }
-    let token = query.get("token").context("pair URI is missing its token")?;
+    let token = query
+        .get("token")
+        .context("pair URI is missing its token")?;
     let server_id = query
         .get("sid")
         .context("pair URI is missing its server id")?;
@@ -969,7 +1367,7 @@ async fn pair_inner(app: &AppHandle, raw_uri: &str) -> anyhow::Result<HarborPair
             Ok((status, _)) => {
                 last_error = Some(anyhow!("Terminal Harbor pairing was rejected ({status})"));
             }
-            Err(err) => last_error = Some(err),
+            Err(err) => last_error = Some(err.into()),
         }
     }
     let (connected_url, response_body) = paired.ok_or_else(|| {
@@ -1012,32 +1410,47 @@ async fn pair_inner(app: &AppHandle, raw_uri: &str) -> anyhow::Result<HarborPair
     })
 }
 
-async fn send_voice_intent(app: &AppHandle, text: &str) -> anyhow::Result<VoiceResponse> {
+async fn send_voice_intent(
+    app: &AppHandle,
+    text: &str,
+) -> Result<VoiceResponse, HarborClientError> {
+    let state = app.state::<HarborControlState>();
+    let _pairing_guard = state.pairing.lock().await;
     let current = settings::get_settings(app);
-    let server_id = current
-        .harbor_server_id
-        .context("Terminal Harbor is not paired")?;
-    let client_id = current
-        .harbor_client_id
-        .context("Terminal Harbor is not paired")?;
+    let server_id =
+        current
+            .harbor_server_id
+            .ok_or_else(|| HarborClientError::AuthenticationFailed {
+                status: None,
+                detail: Some("pairing credentials are missing".into()),
+            })?;
+    let client_id =
+        current
+            .harbor_client_id
+            .ok_or_else(|| HarborClientError::AuthenticationFailed {
+                status: None,
+                detail: Some("pairing credentials are missing".into()),
+            })?;
     let base_url = current
         .harbor_base_url
         .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
-    let key = load_secret(&server_id)?;
-    let body = serde_json::to_vec(&serde_json::json!({"text": text}))?;
-    let (status, response_body) = signed_post(
-        &base_url,
-        VOICE_PATH,
-        body,
-        &key,
-        &key,
-        Some(&client_id),
-    )
-    .await?;
+    let key = load_secret(&server_id).map_err(|_| HarborClientError::AuthenticationFailed {
+        status: None,
+        detail: Some("pairing key is missing or invalid".into()),
+    })?;
+    let body = serde_json::to_vec(&serde_json::json!({"text": text}))
+        .map_err(|err| HarborClientError::Protocol(err.to_string()))?;
+    let (status, response_body) =
+        signed_post(&base_url, VOICE_PATH, body, &key, &key, Some(&client_id)).await?;
     if status != 200 {
-        anyhow::bail!("Terminal Harbor voice endpoint returned HTTP {status}");
+        return Err(HarborClientError::Protocol(format!(
+            "voice endpoint returned HTTP {status}: {}",
+            safe_error_detail(&response_body).unwrap_or_else(|| "unknown error".into())
+        )));
     }
-    serde_json::from_slice(&response_body).context("parsing Terminal Harbor voice response")
+    serde_json::from_slice(&response_body).map_err(|err| {
+        HarborClientError::Protocol(format!("parsing Terminal Harbor voice response: {err}"))
+    })
 }
 
 #[tauri::command]
@@ -1119,9 +1532,83 @@ mod tests {
     }
 
     #[test]
+    fn stored_pairing_key_requires_valid_nonempty_32_byte_secret() {
+        let key = [7u8; 32];
+        let encoded = URL_SAFE_NO_PAD.encode(key);
+        assert_eq!(decode_stored_secret(encoded.as_bytes()).unwrap(), key);
+        assert!(decode_stored_secret(b"").is_err());
+        assert!(decode_stored_secret(b"not-base64!").is_err());
+        assert!(decode_stored_secret(URL_SAFE_NO_PAD.encode([1u8; 16]).as_bytes()).is_err());
+    }
+
+    #[test]
+    fn signed_response_validation_distinguishes_auth_and_integrity_failures() {
+        let key = [3u8; 32];
+        let nonce = "request-nonce";
+        let body = br#"{"ok":true}"#;
+        let canonical = format!("TH-HMAC-V1-RESPONSE\n{nonce}\n200\n{}", sha256_hex(body));
+        let signature = hmac_value(&key, canonical.as_bytes());
+        assert!(validate_signed_response(&key, nonce, 200, body, Some(&signature)).is_ok());
+
+        let unauthorized =
+            validate_signed_response(&key, nonce, 401, br#"{"error":"unauthorized"}"#, None)
+                .unwrap_err();
+        assert!(matches!(
+            unauthorized,
+            HarborClientError::AuthenticationFailed {
+                status: Some(401),
+                detail: Some(ref detail),
+            } if detail == "unauthorized"
+        ));
+
+        assert!(matches!(
+            validate_signed_response(&key, nonce, 500, b"failed", None).unwrap_err(),
+            HarborClientError::UntrustedResponse {
+                status: Some(500),
+                ..
+            }
+        ));
+        assert!(matches!(
+            validate_signed_response(&key, nonce, 200, body, Some("invalid")).unwrap_err(),
+            HarborClientError::UntrustedResponse {
+                status: Some(200),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn auth_recovery_budget_can_only_be_claimed_once() {
+        let error = HarborClientError::AuthenticationFailed {
+            status: Some(401),
+            detail: Some("unauthorized".into()),
+        };
+        let mut used = false;
+        assert!(claim_auth_recovery(&error, &mut used));
+        assert!(!claim_auth_recovery(&error, &mut used));
+        assert!(!claim_auth_recovery(
+            &HarborClientError::Transport("offline".into()),
+            &mut false
+        ));
+    }
+
+    #[test]
+    fn error_detail_is_bounded_and_control_characters_are_removed() {
+        let detail = safe_error_detail(&vec![b'x'; 200]).unwrap();
+        assert_eq!(detail.chars().count(), 160);
+        assert_eq!(
+            safe_error_detail(b"bad\nresponse").as_deref(),
+            Some("bad response")
+        );
+    }
+
+    #[test]
     fn outcome_status_messages_cover_phase_one() {
         assert_eq!(status_for_outcome("executed"), "切替成功");
-        assert_eq!(status_for_outcome("model_unavailable"), "Ollama 未起動 / モデル不可");
+        assert_eq!(
+            status_for_outcome("model_unavailable"),
+            "OpenRouter 応答なし / キー不可"
+        );
         assert_eq!(status_for_outcome("ambiguous"), "候補が曖昧");
     }
 

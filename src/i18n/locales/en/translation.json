@@ -22,7 +22,7 @@
     "subtitle": "Voice commands become desktop actions. Say “harbor mode” to switch to Harbor Control.",
     "status": {
       "inactive": "Inactive",
-      "missingApiKey": "Ollama not ready",
+      "missingApiKey": "OpenRouter key missing",
       "missingModel": "Missing model",
       "active": "Active · {{model}}"
     },
@@ -35,15 +35,15 @@
       "description": "While active, voice commands are actions or conversation. Say “harbor” to open Harbor Control."
     },
     "errors": {
-      "missingApiKey": "Start Ollama on this Mac (http://localhost:11434) before using desktop control.",
-      "missingModel": "Choose an Ollama model in Settings before sending a message."
+      "missingApiKey": "Set OPENROUTER_API_KEY (environment or ~/.zshrc) or add it in Settings before using desktop control.",
+      "missingModel": "Choose an OpenRouter model in Settings before sending a message."
     },
     "help": {
       "toggleBack": "Double-tap the device (if Desktop is preferred) or say “normal mode” to return to normal input. Say “harbor mode” for Harbor Control."
     },
     "inputPlaceholder": "Type your message here…",
     "send": "Send",
-    "sending": "Waiting for Ollama..."
+    "sending": "Waiting for OpenRouter..."
   },
   "harbor": {
     "title": "Harbor Control",
@@ -66,7 +66,12 @@
       "toggleBack": "Double-tap again (if Harbor is preferred) or say “normal mode”. Say “desktop control” for Desktop Control."
     },
     "errors": {
-      "unpaired": "Start Terminal Harbor on this Mac, then try again."
+      "unpaired": "Start Terminal Harbor on this Mac, then try again.",
+      "authentication_failed": "Authentication with Terminal Harbor failed. Handy could not restore the pairing; reconnect in Settings.",
+      "untrusted_response": "Terminal Harbor returned a response that could not be verified. Reconnect in Settings.",
+      "unreachable": "Terminal Harbor could not be reached. Check that it is running, then try again.",
+      "pairing_failed": "Handy could not pair with Terminal Harbor. Reconnect in Settings.",
+      "protocol_error": "Terminal Harbor returned an unexpected response."
     },
     "sending": "Talking to Terminal Harbor…"
   },
@@ -204,22 +209,27 @@
       "noSettingsNeeded": "This model works automatically with no configuration needed."
     },
     "openrouter": {
-      "title": "Desktop Control (Ollama)",
+      "title": "Desktop Control (OpenRouter)",
       "endpoint": {
-        "title": "Local endpoint",
-        "description": "Desktop Control talks to a local OpenAI-compatible server (Ollama by default).",
-        "info": "Default: http://localhost:11434/v1 · model lfm2.5:latest. Start Ollama and pull the model first."
+        "title": "OpenRouter",
+        "description": "Desktop Control sends prompts to OpenRouter chat completions.",
+        "info": "https://openrouter.ai/api/v1 · model deepseek/deepseek-v4-flash-0731. Key: OPENROUTER_API_KEY, then the field below."
+      },
+      "apiKey": {
+        "title": "OpenRouter API key",
+        "description": "Used when OPENROUTER_API_KEY is not set in the environment or ~/.zshrc.",
+        "placeholder": "sk-or-..."
       },
       "model": {
         "title": "Conversation Model",
-        "description": "Choose which Ollama model should answer in Desktop Control. Default is lfm2.5:latest.",
+        "description": "Choose which OpenRouter model should answer in Desktop Control. Default is deepseek/deepseek-v4-flash-0731.",
         "placeholder": "Select or type a model name",
         "refreshModels": "Refresh models"
       },
       "conversation": {
         "title": "Mode Behavior",
         "description": "History stays in memory while Desktop Control is active. Closing the window or saying “normal mode” returns to normal input.",
-        "refreshAction": "Refresh Ollama Models"
+        "refreshAction": "Refresh OpenRouter Models"
       }
     },
     "general": {

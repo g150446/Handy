@@ -253,7 +253,7 @@ Handy has two mutually exclusive voice control surfaces. Settings → General �
 
 | Mode | Purpose | Default engine |
 |------|---------|----------------|
-| **Desktop Control** | Undo / Enter / replace last paste, switch STT model | Local Ollama `lfm2.5:latest` |
+| **Desktop Control** | Undo / Enter / replace last paste, switch STT model | OpenRouter `deepseek/deepseek-v4-flash-0731` |
 | **Harbor Control** | Switch Terminal Harbor workspaces by voice | Harbor bridge `:7780` |
 
 Docs: [preferred-control-mode.md](docs/preferred-control-mode.md) · [control-mode.md](docs/control-mode.md) · [harbor-control-architecture.md](docs/harbor-control-architecture.md)
@@ -275,8 +275,8 @@ While Harbor Control is active, transcriptions are sent to Terminal Harbor (`POS
 
 ### Requirements
 
-- **Desktop Control:** Ollama on `localhost:11434` with `lfm2.5:latest` (or another model in Settings → Desktop)
-- **Harbor Control:** Terminal Harbor running on this Mac (auto-pairs over loopback)
+- **Desktop Control:** OpenRouter API key (`OPENROUTER_API_KEY`, `~/.zshrc`, or Settings → Desktop) with `deepseek/deepseek-v4-flash-0731`
+- **Harbor Control:** Terminal Harbor on this Mac (auto-pairs over loopback) plus the same OpenRouter key on the Harbor side
 - BLE HarnessNode optional for double-tap toggle
 
 ---

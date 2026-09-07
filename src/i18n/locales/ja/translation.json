@@ -22,7 +22,7 @@
     "subtitle": "音声がデスクトップ操作になります。「ハーバーモード」で Harbor に切り替えられます。",
     "status": {
       "inactive": "停止中",
-      "missingApiKey": "Ollama 未準備",
+      "missingApiKey": "OpenRouter キー未設定",
       "missingModel": "モデル未設定",
       "active": "有効 · {{model}}"
     },
@@ -35,15 +35,15 @@
       "description": "有効中、音声は操作または会話として解釈されます。「ハーバー」で Harbor コントロールへ。"
     },
     "errors": {
-      "missingApiKey": "デスクトップ操作の前に、この Mac で Ollama（http://localhost:11434）を起動してください。",
-      "missingModel": "メッセージ送信前に、設定画面で Ollama モデルを選択してください。"
+      "missingApiKey": "デスクトップ操作の前に、OPENROUTER_API_KEY（環境変数または ~/.zshrc）か設定画面のキーを設定してください。",
+      "missingModel": "メッセージ送信前に、設定画面で OpenRouter モデルを選択してください。"
     },
     "help": {
       "toggleBack": "優先がデスクトップならダブルタップ、または「通常入力」で通常モードへ。「ハーバーモード」で Harbor へ。"
     },
     "inputPlaceholder": "メッセージを入力してください…",
     "send": "送信",
-    "sending": "Ollama からの応答を待っています..."
+    "sending": "OpenRouter からの応答を待っています..."
   },
   "onboarding": {
     "subtitle": "開始するには、文字起こしモデルを選択してください",
@@ -177,22 +177,27 @@
       "noSettingsNeeded": "このモデルは設定不要で自動的に動作します。"
     },
     "openrouter": {
-      "title": "デスクトップ操作 (Ollama)",
+      "title": "デスクトップ操作 (OpenRouter)",
       "endpoint": {
-        "title": "ローカルエンドポイント",
-        "description": "デスクトップ操作はローカルの OpenAI 互換サーバー（既定は Ollama）に接続します。",
-        "info": "既定: http://localhost:11434/v1 · モデル lfm2.5:latest。先に Ollama を起動しモデルを pull してください。"
+        "title": "OpenRouter",
+        "description": "デスクトップ操作は OpenRouter の chat completions に送信します。",
+        "info": "https://openrouter.ai/api/v1 · モデル deepseek/deepseek-v4-flash-0731。キーは OPENROUTER_API_KEY、なければ下の欄。"
+      },
+      "apiKey": {
+        "title": "OpenRouter API キー",
+        "description": "環境変数または ~/.zshrc に OPENROUTER_API_KEY が無いときに使います。",
+        "placeholder": "sk-or-..."
       },
       "model": {
         "title": "対話モデル",
-        "description": "デスクトップ操作で使う Ollama モデルを選択します。既定は lfm2.5:latest です。",
+        "description": "デスクトップ操作で使う OpenRouter モデルを選択します。既定は deepseek/deepseek-v4-flash-0731 です。",
         "placeholder": "モデル名を選択または入力",
         "refreshModels": "モデル一覧を更新"
       },
       "conversation": {
         "title": "モードの動作",
         "description": "履歴はデスクトップ操作中のメモリのみ。ウィンドウを閉じるか「通常入力」で通常モードに戻ります。",
-        "refreshAction": "Ollama モデル一覧を更新"
+        "refreshAction": "OpenRouter モデル一覧を更新"
       }
     },
     "models": {
@@ -676,7 +681,12 @@
       "toggleBack": "優先が Harbor ならダブルタップ、または「通常入力」で通常へ。「デスクトップ操作」でデスクトップ操作へ。"
     },
     "errors": {
-      "unpaired": "この Mac で Terminal Harbor を起動してから再試行してください。"
+      "unpaired": "この Mac で Terminal Harbor を起動してから再試行してください。",
+      "authentication_failed": "Terminal Harbor の認証に失敗しました。自動復旧できなかったため、設定から再接続してください。",
+      "untrusted_response": "Terminal Harbor の応答を検証できませんでした。設定から再接続してください。",
+      "unreachable": "Terminal Harbor に接続できません。起動していることを確認して再試行してください。",
+      "pairing_failed": "Terminal Harbor とペアリングできませんでした。設定から再接続してください。",
+      "protocol_error": "Terminal Harbor から予期しない応答が返されました。"
     },
     "sending": "Terminal Harbor に送信中…"
   }

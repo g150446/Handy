@@ -8,10 +8,11 @@ import { Button } from "@/components/ui/Button";
 import { ResetButton } from "@/components/ui/ResetButton";
 import { useSettings } from "@/hooks/useSettings";
 
+import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 
-const PROVIDER_ID = "custom";
-const DEFAULT_MODEL = "lfm2.5:latest";
+const PROVIDER_ID = "openrouter";
+const DEFAULT_MODEL = "deepseek/deepseek-v4-flash-0731";
 
 export const OpenRouterSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -19,12 +20,14 @@ export const OpenRouterSettings: React.FC = () => {
     settings,
     postProcessModelOptions,
     updatePostProcessModel,
+    updatePostProcessApiKey,
     fetchPostProcessModels,
     isUpdating,
   } = useSettings();
 
   const model =
     settings?.post_process_models?.[PROVIDER_ID]?.trim() || DEFAULT_MODEL;
+  const apiKey = settings?.post_process_api_keys?.[PROVIDER_ID] ?? "";
   const modelOptions = (postProcessModelOptions[PROVIDER_ID] ?? []).map(
     (value) => ({
       value,
@@ -34,6 +37,7 @@ export const OpenRouterSettings: React.FC = () => {
 
   const isModelUpdating = isUpdating(`post_process_model:${PROVIDER_ID}`);
   const isFetchingModels = isUpdating(`post_process_models_fetch:${PROVIDER_ID}`);
+  const isApiKeyUpdating = isUpdating(`post_process_api_key:${PROVIDER_ID}`);
 
   return (
     <>
@@ -48,6 +52,21 @@ export const OpenRouterSettings: React.FC = () => {
           <Alert variant="info" className="rounded-lg">
             {t("settings.openrouter.endpoint.info")}
           </Alert>
+        </SettingContainer>
+
+        <SettingContainer
+          title={t("settings.openrouter.apiKey.title")}
+          description={t("settings.openrouter.apiKey.description")}
+          descriptionMode="tooltip"
+          layout="stacked"
+          grouped={true}
+        >
+          <ApiKeyField
+            value={apiKey}
+            onBlur={(value) => void updatePostProcessApiKey(PROVIDER_ID, value)}
+            placeholder={t("settings.openrouter.apiKey.placeholder")}
+            disabled={isApiKeyUpdating}
+          />
         </SettingContainer>
 
         <SettingContainer
