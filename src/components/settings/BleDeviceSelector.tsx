@@ -23,6 +23,7 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
     const [selectedDevice, setSelectedDevice] = useState<string>("");
     const [isScanning, setIsScanning] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
+    const [connectError, setConnectError] = useState("");
 
     // Extract address from "Name (address)" display string
     const parseAddress = (displayStr: string): string => {
@@ -50,6 +51,8 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
         setBleStatus(event.payload);
         if (event.payload.connected) {
           setAudioSource("ble");
+          setIsConnecting(false);
+          setConnectError("");
         }
       }).then((fn) => {
         unlisten = fn;
@@ -84,14 +87,23 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
 
     const handleConnect = async () => {
       if (!selectedDevice) return;
+      setConnectError("");
+      const current = await commands.bleGetStatus();
+      if (current.connected) {
+        setBleStatus(current);
+        setIsConnecting(false);
+        await handleSourceChange("ble");
+        return;
+      }
       setIsConnecting(true);
       try {
         const address = parseAddress(selectedDevice);
         const result = await commands.bleConnectByAddress(address);
         if (result.status === "ok") {
           setBleStatus(result.data);
-          // Automatically switch to BLE source on successful connect
           await handleSourceChange("ble");
+        } else {
+          setConnectError(result.error);
         }
       } finally {
         setIsConnecting(false);
@@ -204,6 +216,9 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
                     ? t("settings.sound.ble.connecting")
                     : t("settings.sound.ble.connect")}
                 </button>
+                {connectError ? (
+                  <p className="text-xs text-red-500">{connectError}</p>
+                ) : null}
               </>
             ) : (
               /* Disconnect button */

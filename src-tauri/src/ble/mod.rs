@@ -165,7 +165,7 @@ impl BleManager {
             discard_next_stop_event: Arc::new(Mutex::new(false)),
             control_mode_capturing: Arc::new(Mutex::new(false)),
             ignore_next_control_mode_start_ack: Arc::new(Mutex::new(false)),
-            allow_auto_reconnect: Arc::new(Mutex::new(true)),
+            allow_auto_reconnect: Arc::new(Mutex::new(false)),
             reconnect_task_started_at: Arc::new(Mutex::new(None)),
             stream_command_epoch: Arc::new(AtomicU64::new(0)),
         }
@@ -225,6 +225,18 @@ impl BleManager {
         )
     }
 
+    fn abort_connecting(&self) {
+        let mut state = self.state.lock().unwrap();
+        if matches!(*state, ConnectionState::Connecting) {
+            *state = ConnectionState::Disconnected;
+            drop(state);
+            let status = self.status();
+            if let Err(e) = self.app_handle.emit("ble-status-changed", &status) {
+                error!("Failed to emit ble-status-changed: {e}");
+            }
+        }
+    }
+
     // ──────────────────────────────────────────────────────── scanning ──
 
     /// Scan for nearby AtomEchoS3R devices.
@@ -245,12 +257,19 @@ impl BleManager {
         for p in central.peripherals().await? {
             if let Ok(Some(props)) = p.properties().await {
                 let name = props.local_name.unwrap_or_default();
-                if is_known_ble_device(&name) {
+                let has_name = is_known_ble_device(&name);
+                let has_svc = props.services.iter().any(|uuid| *uuid == SERVICE_UUID);
+                if has_name || has_svc {
                     // On macOS, BDAddr is always 00:00:00:00:00:00 (CoreBluetooth privacy).
                     // Use PeripheralId (UUID) as the stable identifier instead.
                     let id = p.id().to_string();
-                    info!("Found BLE device: {} ({})", name, id);
-                    found.push(format!("{} ({})", name, id));
+                    let label = if name.is_empty() {
+                        "HarnessNode (?)".to_string()
+                    } else {
+                        name
+                    };
+                    info!("Found BLE device: {} ({})", label, id);
+                    found.push(format!("{} ({})", label, id));
                 }
             }
         }
@@ -264,7 +283,6 @@ impl BleManager {
         preferred_id: Option<&str>,
     ) -> Result<Option<Peripheral>> {
         let deadline = tokio::time::Instant::now() + timeout;
-        let mut fallback_match: Option<Peripheral> = None;
 
         while tokio::time::Instant::now() < deadline {
             for peripheral in central.peripherals().await? {
@@ -272,19 +290,12 @@ impl BleManager {
                     if peripheral.id().to_string() == id {
                         return Ok(Some(peripheral));
                     }
+                    continue;
                 }
 
                 if let Ok(Some(props)) = peripheral.properties().await {
-                    if is_known_ble_device(
-                        props.local_name.as_deref().unwrap_or(""),
-                    )
-                    {
-                        if preferred_id.is_none() {
-                            return Ok(Some(peripheral));
-                        }
-                        if fallback_match.is_none() {
-                            fallback_match = Some(peripheral);
-                        }
+                    if is_known_ble_device(props.local_name.as_deref().unwrap_or("")) {
+                        return Ok(Some(peripheral));
                     }
                 }
             }
@@ -292,7 +303,7 @@ impl BleManager {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
 
-        Ok(fallback_match)
+        Ok(None)
     }
 
     // ────────────────────────────────────────────────────── connection ──
@@ -308,19 +319,40 @@ impl BleManager {
 
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
-        central.start_scan(ScanFilter::default()).await?;
-        let matched = self
-            .find_matching_peripheral(&central, std::time::Duration::from_secs(scan_secs), None)
-            .await?;
-        central.stop_scan().await?;
+        let result = async {
+            central.start_scan(ScanFilter::default()).await?;
+            let matched = self
+                .find_matching_peripheral(&central, std::time::Duration::from_secs(scan_secs), None)
+                .await?;
+            central.stop_scan().await?;
+            let device =
+                matched.ok_or_else(|| anyhow::anyhow!("AtomEchoS3R not found during scan"))?;
+            self.do_connect(device, central).await
+        }
+        .await;
 
-        let device = matched.ok_or_else(|| anyhow::anyhow!("AtomEchoS3R not found during scan"))?;
-
-        self.do_connect(device, central).await
+        if result.is_err() {
+            self.abort_connecting();
+        }
+        result
     }
 
     /// Connect to a specific device by its PeripheralId string.
     pub async fn connect_by_address(&self, address: &str) -> Result<()> {
+        {
+            let state = self.state.lock().unwrap();
+            if let ConnectionState::Connected { device_address, .. } = &*state {
+                if device_address == address {
+                    info!("BLE already connected to {}", address);
+                    return Ok(());
+                }
+            }
+        }
+        if self.is_connected() {
+            warn!("BLE connected to a different device; disconnecting first");
+            self.disconnect().await?;
+        }
+
         let manager = Manager::new().await?;
         let adapters = manager.adapters().await?;
         let central = adapters
@@ -330,39 +362,36 @@ impl BleManager {
 
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
-        central.start_scan(ScanFilter::default()).await?;
-        let matched = self
-            .find_matching_peripheral(&central, std::time::Duration::from_secs(8), Some(address))
-            .await?;
-
-        central.stop_scan().await?;
-
-        if matched.is_some() {
-            if matched
-                .as_ref()
-                .is_some_and(|peripheral| peripheral.id().to_string() != address)
-            {
-                warn!(
-                    "BLE device id {} was not found; using name-based fallback peripheral {}",
-                    address,
-                    matched.as_ref().unwrap().id()
-                );
-            }
-        } else {
-            warn!(
-                "BLE device id {} was not found; falling back to scan by device name also failed",
-                address
-            );
+        let result = async {
+            central.start_scan(ScanFilter::default()).await?;
+            let matched = self
+                .find_matching_peripheral(
+                    &central,
+                    std::time::Duration::from_secs(8),
+                    Some(address),
+                )
+                .await?;
+            central.stop_scan().await?;
+            let device =
+                matched.ok_or_else(|| anyhow::anyhow!("Device not found: {}", address))?;
+            self.do_connect(device, central).await
         }
+        .await;
 
-        let device = matched.ok_or_else(|| anyhow::anyhow!("Device not found: {}", address))?;
-
-        self.do_connect(device, central).await
+        if result.is_err() {
+            self.abort_connecting();
+        }
+        result
     }
 
     async fn do_connect(&self, device: Peripheral, adapter: Adapter) -> Result<()> {
-        device.connect().await?;
-        device.discover_services().await?;
+        if !device.is_connected().await.unwrap_or(false) {
+            device.connect().await?;
+        }
+        if let Err(e) = device.discover_services().await {
+            let _ = device.disconnect().await;
+            return Err(anyhow::anyhow!("{e}"));
+        }
 
         let device_address = device.id().to_string();
         let device_name = {
@@ -377,10 +406,16 @@ impl BleManager {
         let tx_char = chars
             .iter()
             .find(|c| c.uuid == TX_CHAR_UUID && c.properties.contains(CharPropFlags::NOTIFY))
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("TX notify characteristic not found"))?;
+            .cloned();
+        let Some(tx_char) = tx_char else {
+            let _ = device.disconnect().await;
+            return Err(anyhow::anyhow!("TX notify characteristic not found"));
+        };
 
-        device.subscribe(&tx_char).await?;
+        if let Err(e) = device.subscribe(&tx_char).await {
+            let _ = device.disconnect().await;
+            return Err(anyhow::anyhow!("{e}"));
+        }
 
         let listener_device = device.clone();
         *self.peripheral.lock().unwrap() = Some(device);
@@ -404,6 +439,11 @@ impl BleManager {
 
         self.spawn_notification_listener(listener_device);
 
+        let status = self.status();
+        if let Err(e) = self.app_handle.emit("ble-status-changed", &status) {
+            error!("Failed to emit ble-status-changed: {e}");
+        }
+
         // Allow BLE to stabilise before the caller sends commands.
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
@@ -412,11 +452,6 @@ impl BleManager {
         // MAC_HANDY, so Handy claiming here is safe for both preference modes.
         if let Err(e) = self.claim_primary_role().await {
             warn!("BLE: failed to claim primary role after connect: {e}");
-        }
-
-        let status = self.status();
-        if let Err(e) = self.app_handle.emit("ble-status-changed", &status) {
-            error!("Failed to emit ble-status-changed: {e}");
         }
 
         Ok(())

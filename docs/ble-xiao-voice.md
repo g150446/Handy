@@ -14,7 +14,9 @@ HarnessNode は腕のジェスチャーを IMU（LSM6DS3TR-C）で検出し、BL
 
 ## BLE 認識
 
-Handy の BLE マネージャー（`src-tauri/src/ble/mod.rs`）の `is_known_ble_device()` 関数に `HarnessNode` が登録されています。BLE スキャン中にこのデバイス名が見つかると、既知デバイスとして自動認識されます。
+Handy の BLE マネージャー（`src-tauri/src/ble/mod.rs`）の `is_known_ble_device()` は名前に `HarnessNode` / `XIAOVoice` / `AtomEchoS3R` を含むデバイスをスキャン一覧に出す。`HarnessNode-Plus2` / `HarnessNode-PlusSE` もこれに含まれる。
+
+スキャンは GATT 接続しない。接続は設定画面の **Connect** だけ。起動時の自動接続はしない。Connect 成功後にリンクが切れたときだけ、同じ PeripheralId へ再接続する（名前フォールバックはしない）。
 
 ---
 
@@ -100,12 +102,23 @@ motion_active / motion_settled の z 値は info レベルで出力されるた�
 
 ## 接続セットアップ
 
-1. XIAO nRF52840 Sense に `nordic-main` ファームウェアを書き込みます（`nordic-main/build_and_flash.sh`）。
-2. デバイスを起動すると青色 LED が点滅し、`HarnessNode` としてアドバタイジングを開始します。
-3. Handy アプリの BLE 設定画面でデバイスをスキャンし、`HarnessNode` を選択してペアリングします。
-4. 接続が確立すると XIAO の LED が緑色に変わります。
+### XIAO nRF52840 Sense（`HarnessNode`）
 
-以降は Handy 起動時に自動で再接続されます（`is_known_ble_device()` により自動認識）。
+1. `nordic-main` を書き込む（`nordic-main/build_and_flash.sh`）。
+2. 起動すると `HarnessNode` として広告する。
+3. Handy の BLE 設定で Scan → 選択 → Connect。
+
+### M5StickC Plus SE（`HarnessNode-PlusSE`）
+
+起動直後は広告しない。
+
+1. Stick の **BtnA 短押し**（画面が `ADV`）。
+2. Handy で音声ソース BLE → Scan → `HarnessNode-PlusSE` → Connect。
+3. Stick が `connected` になり、相手 MAC を出す。
+
+Handy を再起動したら、また Scan → Connect が必要（起動時自動接続なし）。
+
+詳細は harness-node リポの `docs/stickc_plus_se_guide.md`。
 
 ---
 

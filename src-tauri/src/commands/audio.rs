@@ -247,6 +247,12 @@ pub async fn ble_connect_first(app: AppHandle, scan_secs: u64) -> Result<BleStat
 #[specta::specta]
 pub async fn ble_connect_by_address(app: AppHandle, address: String) -> Result<BleStatus, String> {
     let ble = app.state::<Arc<BleManager>>();
+    if ble.is_connected() {
+        let status = ble.status();
+        if status.device_address.as_deref() == Some(address.as_str()) {
+            return Ok(status);
+        }
+    }
     ble.connect_by_address(&address)
         .await
         .map_err(|e| e.to_string())?;
