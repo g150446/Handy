@@ -79,6 +79,14 @@
       "gigaam-v3-e2e-ctc": {
         "name": "GigaAM v3",
         "description": "俄语语音识别。快速且准确。"
+      },
+      "gemma4-e2b": {
+        "name": "Gemma 4 E2B",
+        "description": "Ollama. Fast multilingual speech via Gemma 4 audio."
+      },
+      "gemma4-e4b": {
+        "name": "Gemma 4 E4B",
+        "description": "Ollama. More accurate Gemma 4 speech recognition."
       }
     },
     "errors": {
@@ -134,7 +142,8 @@
       "languageOnly": "仅 {{language}}"
     },
     "cancel": "取消",
-    "cancelDownload": "取消下载"
+    "cancelDownload": "取消下载",
+    "ollama": "Ollama"
   },
   "settings": {
     "modelSettings": {
@@ -157,7 +166,11 @@
       },
       "noModelsMatch": "没有符合此筛选条件的模型。",
       "yourModels": "已下载的模型",
-      "availableModels": "可供下载"
+      "availableModels": "可供下载",
+      "ollamaUrl": {
+        "title": "Ollama URL",
+        "description": "Used for Gemma 4 speech-to-text. Download below to pull the model, or run ollama pull gemma4:e2b / gemma4:e4b."
+      }
     },
     "general": {
       "title": "通用",

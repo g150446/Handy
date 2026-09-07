@@ -9,6 +9,7 @@ use tauri::{AppHandle, State};
 pub async fn get_available_models(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<Vec<ModelInfo>, String> {
+    model_manager.refresh_ollama_status().await;
     Ok(model_manager.get_available_models())
 }
 
@@ -66,7 +67,7 @@ pub async fn set_active_model(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    // Check if model exists and is available
+    model_manager.refresh_ollama_status().await;
     let model_info = model_manager
         .get_model_info(&model_id)
         .ok_or_else(|| format!("Model not found: {}", model_id))?;
@@ -118,6 +119,7 @@ pub async fn is_model_loading(
 pub async fn has_any_models_available(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<bool, String> {
+    model_manager.refresh_ollama_status().await;
     let models = model_manager.get_available_models();
     Ok(models.iter().any(|m| m.is_downloaded))
 }
@@ -127,8 +129,8 @@ pub async fn has_any_models_available(
 pub async fn has_any_models_or_downloads(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<bool, String> {
+    model_manager.refresh_ollama_status().await;
     let models = model_manager.get_available_models();
-    // Return true if any models are downloaded OR if any downloads are in progress
     Ok(models.iter().any(|m| m.is_downloaded))
 }
 

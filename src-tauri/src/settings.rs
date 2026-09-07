@@ -435,10 +435,17 @@ pub struct AppSettings {
     /// Control surface toggled by device double-tap and the preferred-control shortcut.
     #[serde(default)]
     pub preferred_control_mode: PreferredControlMode,
+    /// Ollama HTTP base URL used for Gemma 4 speech-to-text (no `/v1` suffix).
+    #[serde(default = "default_ollama_base_url")]
+    pub ollama_base_url: String,
 }
 
 fn default_model() -> String {
     "".to_string()
+}
+
+pub fn default_ollama_base_url() -> String {
+    "http://localhost:11434".to_string()
 }
 
 fn default_always_on_microphone() -> bool {
@@ -940,6 +947,7 @@ pub fn get_default_settings() -> AppSettings {
         harbor_client_id: None,
         harbor_base_url: None,
         preferred_control_mode: PreferredControlMode::default(),
+        ollama_base_url: default_ollama_base_url(),
     }
 }
 

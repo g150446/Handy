@@ -79,6 +79,14 @@
       "gigaam-v3-e2e-ctc": {
         "name": "GigaAM v3",
         "description": "Nhận dạng giọng nói tiếng Nga. Nhanh và chính xác."
+      },
+      "gemma4-e2b": {
+        "name": "Gemma 4 E2B",
+        "description": "Ollama. Fast multilingual speech via Gemma 4 audio."
+      },
+      "gemma4-e4b": {
+        "name": "Gemma 4 E4B",
+        "description": "Ollama. More accurate Gemma 4 speech recognition."
       }
     },
     "errors": {
@@ -134,7 +142,8 @@
       "languageOnly": "Chỉ {{language}}"
     },
     "cancel": "Hủy",
-    "cancelDownload": "Hủy tải xuống"
+    "cancelDownload": "Hủy tải xuống",
+    "ollama": "Ollama"
   },
   "settings": {
     "modelSettings": {
@@ -157,7 +166,11 @@
       },
       "noModelsMatch": "Không có mô hình nào khớp với bộ lọc này.",
       "yourModels": "Mô hình đã tải",
-      "availableModels": "Có sẵn để tải xuống"
+      "availableModels": "Có sẵn để tải xuống",
+      "ollamaUrl": {
+        "title": "Ollama URL",
+        "description": "Used for Gemma 4 speech-to-text. Download below to pull the model, or run ollama pull gemma4:e2b / gemma4:e4b."
+      }
     },
     "general": {
       "title": "Chung",

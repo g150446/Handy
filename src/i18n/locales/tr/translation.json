@@ -79,6 +79,14 @@
       "gigaam-v3-e2e-ctc": {
         "name": "GigaAM v3",
         "description": "Rusça konuşma tanıma. Hızlı ve doğru."
+      },
+      "gemma4-e2b": {
+        "name": "Gemma 4 E2B",
+        "description": "Ollama. Fast multilingual speech via Gemma 4 audio."
+      },
+      "gemma4-e4b": {
+        "name": "Gemma 4 E4B",
+        "description": "Ollama. More accurate Gemma 4 speech recognition."
       }
     },
     "errors": {
@@ -134,7 +142,8 @@
       "languageOnly": "Yalnızca {{language}}"
     },
     "cancel": "İptal",
-    "cancelDownload": "İndirmeyi iptal et"
+    "cancelDownload": "İndirmeyi iptal et",
+    "ollama": "Ollama"
   },
   "settings": {
     "modelSettings": {
@@ -157,7 +166,11 @@
       },
       "noModelsMatch": "Bu filtreyle eşleşen model yok.",
       "yourModels": "İndirilen modeller",
-      "availableModels": "İndirilebilir"
+      "availableModels": "İndirilebilir",
+      "ollamaUrl": {
+        "title": "Ollama URL",
+        "description": "Used for Gemma 4 speech-to-text. Download below to pull the model, or run ollama pull gemma4:e2b / gemma4:e4b."
+      }
     },
     "general": {
       "title": "Genel",

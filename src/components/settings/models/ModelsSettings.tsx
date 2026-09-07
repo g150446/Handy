@@ -8,6 +8,8 @@ import { useModelStore } from "@/stores/modelStore";
 import { LANGUAGES } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
 import { commands } from "@/bindings";
+import { Input } from "@/components/ui/Input";
+import { useSettings } from "@/hooks/useSettings";
 
 // check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
@@ -16,6 +18,9 @@ const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
 
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting, updateSetting } = useSettings();
+  const ollamaUrl = getSetting("ollama_base_url") ?? "http://localhost:11434";
+  const [ollamaUrlDraft, setOllamaUrlDraft] = useState(ollamaUrl);
   const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
   const [languageFilter, setLanguageFilter] = useState("all");
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
@@ -36,6 +41,10 @@ export const ModelsSettings: React.FC = () => {
     deleteModel,
     loadModels,
   } = useModelStore();
+
+  useEffect(() => {
+    setOllamaUrlDraft(ollamaUrl);
+  }, [ollamaUrl]);
 
   // click outside handler for language dropdown
   useEffect(() => {
@@ -231,6 +240,32 @@ export const ModelsSettings: React.FC = () => {
         </h1>
         <p className="text-sm text-text/60">
           {t("settings.models.description")}
+        </p>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-text/80">
+          {t("settings.models.ollamaUrl.title", {
+            defaultValue: "Ollama URL",
+          })}
+        </label>
+        <Input
+          value={ollamaUrlDraft}
+          onChange={(e) => setOllamaUrlDraft(e.target.value)}
+          onBlur={() => {
+            const next = ollamaUrlDraft.trim() || "http://localhost:11434";
+            setOllamaUrlDraft(next);
+            if (next !== ollamaUrl) {
+              void updateSetting("ollama_base_url", next);
+              void loadModels();
+            }
+          }}
+          placeholder="http://localhost:11434"
+        />
+        <p className="text-xs text-text/50">
+          {t("settings.models.ollamaUrl.description", {
+            defaultValue:
+              "Used for Gemma 4 speech-to-text. Pull gemma4:e2b or gemma4:e4b in Ollama first, or download below.",
+          })}
         </p>
       </div>
       {filteredModels.length > 0 ? (

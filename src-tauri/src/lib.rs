@@ -9,13 +9,14 @@ mod clipboard;
 mod commands;
 mod control;
 mod harbor_control;
-mod preferred_control;
 mod helpers;
 mod input;
 mod llm_client;
 mod managers;
+mod ollama_stt;
 mod overlay;
 pub mod portable;
+mod preferred_control;
 mod settings;
 mod shortcut;
 mod signal_handle;
@@ -332,6 +333,7 @@ pub fn run(cli_args: CliArgs) {
         shortcut::change_keyboard_implementation_setting,
         shortcut::get_keyboard_implementation,
         shortcut::change_show_tray_icon_setting,
+        shortcut::change_ollama_base_url_setting,
         shortcut::handy_keys::start_handy_keys_recording,
         shortcut::handy_keys::stop_handy_keys_recording,
         trigger_update_check,

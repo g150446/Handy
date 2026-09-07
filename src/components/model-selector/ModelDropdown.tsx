@@ -62,6 +62,11 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
                         {t("modelSelector.custom")}
                       </span>
                     )}
+                    {model.engine_type === "Ollama" && (
+                      <span className="ms-1.5 text-[10px] font-medium text-text/40 uppercase">
+                        {t("modelSelector.ollama", { defaultValue: "Ollama" })}
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-text/40 italic pe-4">
                     {getTranslatedModelDescription(model, t)}

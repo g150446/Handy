@@ -1091,3 +1091,12 @@ pub fn change_show_tray_icon_setting(app: AppHandle, enabled: bool) -> Result<()
 
     Ok(())
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_ollama_base_url_setting(app: AppHandle, url: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.ollama_base_url = url;
+    settings::write_settings(&app, settings);
+    Ok(())
+}

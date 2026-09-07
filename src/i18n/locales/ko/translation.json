@@ -79,6 +79,14 @@
       "gigaam-v3-e2e-ctc": {
         "name": "GigaAM v3",
         "description": "러시아어 음성 인식. 빠르고 정확함."
+      },
+      "gemma4-e2b": {
+        "name": "Gemma 4 E2B",
+        "description": "Ollama. Fast multilingual speech via Gemma 4 audio."
+      },
+      "gemma4-e4b": {
+        "name": "Gemma 4 E4B",
+        "description": "Ollama. More accurate Gemma 4 speech recognition."
       }
     },
     "errors": {
@@ -134,7 +142,8 @@
       "languageOnly": "{{language}} 전용",
       "translation": "영어로 번역 가능",
       "translate": "영어로 번역"
-    }
+    },
+    "ollama": "Ollama"
   },
   "settings": {
     "modelSettings": {
@@ -240,7 +249,11 @@
         "translation": "번역",
         "allLanguages": "모든 언어"
       },
-      "noModelsMatch": "이 필터에 맞는 모델이 없습니다."
+      "noModelsMatch": "이 필터에 맞는 모델이 없습니다.",
+      "ollamaUrl": {
+        "title": "Ollama URL",
+        "description": "Used for Gemma 4 speech-to-text. Download below to pull the model, or run ollama pull gemma4:e2b / gemma4:e4b."
+      }
     },
     "advanced": {
       "title": "고급",

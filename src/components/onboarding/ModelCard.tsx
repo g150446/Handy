@@ -154,6 +154,11 @@ const ModelCard: React.FC<ModelCardProps> = ({
             {model.is_custom && !model.is_external && (
               <Badge variant="secondary">{t("modelSelector.custom")}</Badge>
             )}
+            {model.engine_type === "Ollama" && (
+              <Badge variant="secondary">
+                {t("modelSelector.ollama", { defaultValue: "Ollama" })}
+              </Badge>
+            )}
             {status === "switching" && (
               <Badge variant="secondary">
                 <Loader2 className="w-3 h-3 mr-1 animate-spin" />
@@ -227,7 +232,9 @@ const ModelCard: React.FC<ModelCardProps> = ({
             <span>{formatModelSize(Number(model.size_mb))}</span>
           </span>
         )}
-        {onDelete && (status === "available" || status === "active") && (
+        {onDelete &&
+          model.engine_type !== "Ollama" &&
+          (status === "available" || status === "active") && (
           <Button
             variant="ghost"
             size="sm"

@@ -355,6 +355,14 @@ async changeShowTrayIconSetting(enabled: boolean) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
+async changeOllamaBaseUrlSetting(url: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_ollama_base_url_setting", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Start key recording mode
  */
@@ -869,7 +877,8 @@ harbor_base_url?: string | null;
 /**
  * Control surface toggled by device double-tap and the preferred-control shortcut.
  */
-preferred_control_mode?: PreferredControlMode }
+preferred_control_mode?: PreferredControlMode;
+ollama_base_url?: string }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AudioSource = 
 /**
@@ -891,7 +900,7 @@ export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type ControlStateSnapshot = { active: boolean; session_id: number; messages: ControlTurn[]; is_sending: boolean; last_error: string | null; api_key_source: ApiKeySource; has_last_pasted: boolean }
 export type ControlTurn = { role: string; content: string }
 export type CustomSounds = { start: boolean; stop: boolean }
-export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM"
+export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Ollama"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null }
 /**
  * Result of changing keyboard implementation

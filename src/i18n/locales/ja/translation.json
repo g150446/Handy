@@ -112,6 +112,14 @@
       "gigaam-v3-e2e-ctc": {
         "name": "GigaAM v3",
         "description": "ロシア語音声認識。高速かつ高精度。"
+      },
+      "gemma4-e2b": {
+        "name": "Gemma 4 E2B",
+        "description": "Ollama。Gemma 4 の音声入力で多言語の書き起こし。"
+      },
+      "gemma4-e4b": {
+        "name": "Gemma 4 E4B",
+        "description": "Ollama。Gemma 4 のより高精度な音声認識。"
       }
     },
     "errors": {
@@ -169,7 +177,8 @@
     },
     "cancel": "キャンセル",
     "cancelDownload": "ダウンロードをキャンセル",
-    "external": "外部"
+    "external": "外部",
+    "ollama": "Ollama"
   },
   "settings": {
     "modelSettings": {
@@ -219,7 +228,11 @@
       "availableModels": "ダウンロード可能",
       "importOnnx": "ONNXモデルをインポート",
       "importOnnxPickTitle": "モデルディレクトリ内の encoder-model.onnx を選択してください",
-      "importOnnxError": "モデルのインポートに失敗しました: {{error}}"
+      "importOnnxError": "モデルのインポートに失敗しました: {{error}}",
+      "ollamaUrl": {
+        "title": "Ollama URL",
+        "description": "Gemma 4 の音声認識で使います。下のダウンロードで pull するか、ollama pull gemma4:e2b / gemma4:e4b を実行してください。"
+      }
     },
     "general": {
       "title": "一般",

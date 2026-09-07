@@ -79,6 +79,14 @@
       "gigaam-v3-e2e-ctc": {
         "name": "GigaAM v3",
         "description": "التعرف على الكلام الروسي. سريع ودقيق."
+      },
+      "gemma4-e2b": {
+        "name": "Gemma 4 E2B",
+        "description": "Ollama. Fast multilingual speech via Gemma 4 audio."
+      },
+      "gemma4-e4b": {
+        "name": "Gemma 4 E4B",
+        "description": "Ollama. More accurate Gemma 4 speech recognition."
       }
     },
     "errors": {
@@ -134,7 +142,8 @@
       "languageOnly": "{{language}} فقط",
       "translation": "يدعم الترجمة",
       "translate": "ترجمة"
-    }
+    },
+    "ollama": "Ollama"
   },
   "settings": {
     "general": {
@@ -513,7 +522,11 @@
         "translation": "ترجمة",
         "allLanguages": "جميع اللغات"
       },
-      "noModelsMatch": "لا توجد نماذج مطابقة لهذا الفلتر."
+      "noModelsMatch": "لا توجد نماذج مطابقة لهذا الفلتر.",
+      "ollamaUrl": {
+        "title": "Ollama URL",
+        "description": "Used for Gemma 4 speech-to-text. Download below to pull the model, or run ollama pull gemma4:e2b / gemma4:e4b."
+      }
     }
   },
   "footer": {

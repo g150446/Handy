@@ -44,6 +44,7 @@ enum LoadedEngine {
     MoonshineStreaming(MoonshineStreamingEngine),
     SenseVoice(SenseVoiceEngine),
     GigaAM(GigaAMEngine),
+    Ollama { model: String },
 }
 
 #[derive(Clone)]
@@ -168,6 +169,10 @@ impl TranscriptionManager {
                     LoadedEngine::MoonshineStreaming(ref mut e) => e.unload_model(),
                     LoadedEngine::SenseVoice(ref mut e) => e.unload_model(),
                     LoadedEngine::GigaAM(ref mut e) => e.unload_model(),
+                    LoadedEngine::Ollama { model } => {
+                        let base_url = crate::ollama_stt::resolve_base_url(&self.app_handle);
+                        let _ = crate::ollama_stt::unload(&base_url, model);
+                    }
                 }
             }
             *engine = None; // Drop the engine to free memory
@@ -243,7 +248,11 @@ impl TranscriptionManager {
             return Err(anyhow::anyhow!(error_msg));
         }
 
-        let model_path = self.model_manager.get_model_path(model_id)?;
+        let model_path = if matches!(model_info.engine_type, EngineType::Ollama) {
+            std::path::PathBuf::new()
+        } else {
+            self.model_manager.get_model_path(model_id)?
+        };
 
         // Create appropriate engine based on model type
         let loaded_engine = match model_info.engine_type {
@@ -365,6 +374,31 @@ impl TranscriptionManager {
                     anyhow::anyhow!(error_msg)
                 })?;
                 LoadedEngine::GigaAM(engine)
+            }
+            EngineType::Ollama => {
+                let base_url = crate::ollama_stt::resolve_base_url(&self.app_handle);
+                let settings = get_settings(&self.app_handle);
+                crate::ollama_stt::preload(
+                    &base_url,
+                    &model_info.filename,
+                    settings.model_unload_timeout,
+                )
+                .map_err(|e| {
+                    let error_msg = format!("Failed to load Ollama model {}: {}", model_id, e);
+                    let _ = self.app_handle.emit(
+                        "model-state-changed",
+                        ModelStateEvent {
+                            event_type: "loading_failed".to_string(),
+                            model_id: Some(model_id.to_string()),
+                            model_name: Some(model_info.name.clone()),
+                            error: Some(error_msg.clone()),
+                        },
+                    );
+                    anyhow::anyhow!(error_msg)
+                })?;
+                LoadedEngine::Ollama {
+                    model: model_info.filename.clone(),
+                }
             }
         };
 
@@ -498,9 +532,8 @@ impl TranscriptionManager {
                                 Some(normalized)
                             };
 
-                            let initial_prompt = crate::harbor_control::whisper_initial_prompt(
-                                &self.app_handle,
-                            );
+                            let initial_prompt =
+                                crate::harbor_control::whisper_initial_prompt(&self.app_handle);
                             let params = WhisperInferenceParams {
                                 language: whisper_language,
                                 translate: settings.translate_to_english,
@@ -553,6 +586,25 @@ impl TranscriptionManager {
                         LoadedEngine::GigaAM(gigaam_engine) => gigaam_engine
                             .transcribe_samples(audio, None)
                             .map_err(|e| anyhow::anyhow!("GigaAM transcription failed: {}", e)),
+                        LoadedEngine::Ollama { model } => {
+                            let wav =
+                                crate::audio_toolkit::encode_wav_bytes(&audio).map_err(|e| {
+                                    anyhow::anyhow!("Failed to encode WAV for Ollama: {}", e)
+                                })?;
+                            let base_url = crate::ollama_stt::resolve_base_url(&self.app_handle);
+                            let text = crate::ollama_stt::transcribe(
+                                &base_url,
+                                model,
+                                &wav,
+                                &settings.selected_language,
+                                settings.translate_to_english,
+                                settings.model_unload_timeout,
+                            )?;
+                            Ok(transcribe_rs::TranscriptionResult {
+                                text,
+                                segments: None,
+                            })
+                        }
                     }
                 },
             ));

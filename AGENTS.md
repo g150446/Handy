@@ -50,8 +50,9 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri (R
 - `lib.rs` - Main application entry point with Tauri setup, tray menu, and managers
 - `managers/` - Core business logic managers:
   - `audio.rs` - Audio recording and device management
-  - `model.rs` - Whisper model downloading and management
+  - `model.rs` - STT catalog, download/pull, and discovery
   - `transcription.rs` - Speech-to-text processing pipeline
+- `ollama_stt.rs` - Gemma 4 STT via local Ollama (`gemma4:e2b` / `gemma4:e4b`)
 - `audio_toolkit/` - Low-level audio processing:
   - `audio/` - Device enumeration, recording, resampling
   - `vad/` - Voice Activity Detection using Silero VAD
@@ -97,7 +98,7 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri (R
 1. **Initialization:** App starts minimized to tray, loads settings, initializes managers
 2. **Model Setup:** First-run downloads preferred Whisper model (Small/Medium/Turbo/Large)
 3. **Recording:** Global shortcut or BLE triggers audio recording with VAD filtering
-4. **Processing:** Audio sent to Whisper model for transcription
+4. **Processing:** Audio sent to the selected STT engine (local Whisper/Parakeet/etc., or Ollama Gemma 4)
 5. **Output routing:**
    - **Harbor Control active** → `harbor_control::submit_transcript` (no paste; mode phrases intercepted first)
    - **Desktop Control active** → `control::submit_voice_prompt` (tools via OpenRouter)
@@ -113,14 +114,17 @@ Settings are stored using Tauri's store plugin with reactive updates:
 
 - Keyboard shortcuts (configurable, supports push-to-talk)
 - Audio devices (microphone/output selection)
-- Model preferences (Small/Medium/Turbo/Large Whisper variants)
+- Model preferences (local Whisper/Parakeet/etc., or Ollama Gemma 4)
 - Audio feedback and translation options
 - `preferred_control_mode`, Harbor pairing fields (`harbor_*`)
+- `ollama_base_url` for Gemma 4 STT (default `http://localhost:11434`; `OLLAMA_HOST` overrides)
 - Desktop Control / Harbor voice: OpenRouter (`OPENROUTER_API_KEY` or Settings → Desktop)
 
 ### Model Discovery
 
 `ModelManager` loads the built-in catalog, scans `{app_data}/models/`, and also discovers compatible GGML / Parakeet files from external caches (OpenWhispr, Meetily, Hugging Face hub). External hits set `ModelInfo.local_path` / `is_external` and are loaded without copying. Details: `docs/external-model-cache.md`.
+
+Ollama Gemma 4 E2B/E4B appear in the same catalog (`EngineType::Ollama`). Availability comes from `GET /api/tags`; download is `POST /api/pull`. Docs: `docs/ollama-gemma4-stt.md`.
 
 ### Single Instance Architecture
 
