@@ -1,226 +1,59 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ask, open } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, Globe } from "lucide-react";
-import type { ModelCardStatus } from "@/components/onboarding";
-import { ModelCard } from "@/components/onboarding";
+import { RefreshCw } from "lucide-react";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useModelStore } from "@/stores/modelStore";
-import { LANGUAGES } from "@/lib/constants/languages.ts";
-import type { ModelInfo } from "@/bindings";
-import { commands } from "@/bindings";
-import { Input } from "@/components/ui/Input";
-import { useSettings } from "@/hooks/useSettings";
+import {
+  ModelTable,
+  Note,
+  useModelFilters,
+  type TableSection,
+} from "@/components/shared/modelTable/ModelTable";
+import RetiredModelsNotice from "./RetiredModelsNotice";
+import { ModelRow } from "./ModelRow";
+import { Legend } from "./Legend";
+import { useModelEntries } from "./modelEntries";
+import { OllamaUrlSetting } from "./OllamaUrlSetting";
 
-// check if model supports a language based on its supported_languages list
-const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
-  return model.supported_languages.includes(langCode);
+/** Past this many models on disk, the rest fold under "Show N more". */
+const YOURS_LIMIT = 5;
+
+/** Look for model files added outside Handy: quiet, beside its section's name. */
+const Rescan: React.FC = () => {
+  const { t } = useTranslation();
+  const rescanning = useModelStore((s) => s.isRescanning);
+  return (
+    <Tooltip text={t("settings.models.rescan.tooltip")}>
+      <button
+        type="button"
+        onClick={() => useModelStore.getState().rescanLocalModels()}
+        disabled={rescanning}
+        aria-label={t("settings.models.rescan.tooltip")}
+        className="ms-[6px] grid size-[22px] cursor-pointer place-items-center rounded-full text-ink-3 hover:bg-wash hover:text-text disabled:cursor-default focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary"
+      >
+        <RefreshCw
+          className={`size-[12px] ${rescanning ? "animate-spin" : ""}`}
+          aria-hidden="true"
+        />
+      </button>
+    </Tooltip>
+  );
 };
 
-export const ModelsSettings: React.FC = () => {
+interface ModelsSettingsProps {
+  /** Where the languages are changed (General). */
+  onChangeLanguages?: () => void;
+}
+
+/** The Models page: onboarding's model table, filling the window. */
+export const ModelsSettings: React.FC<ModelsSettingsProps> = ({
+  onChangeLanguages,
+}) => {
   const { t } = useTranslation();
-  const { getSetting, updateSetting } = useSettings();
-  const ollamaUrl = getSetting("ollama_base_url") ?? "http://localhost:11434";
-  const [ollamaUrlDraft, setOllamaUrlDraft] = useState(ollamaUrl);
-  const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
-  const [languageFilter, setLanguageFilter] = useState("all");
-  const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
-  const [languageSearch, setLanguageSearch] = useState("");
-  const languageDropdownRef = useRef<HTMLDivElement>(null);
-  const languageSearchInputRef = useRef<HTMLInputElement>(null);
-  const {
-    models,
-    currentModel,
-    downloadingModels,
-    downloadProgress,
-    downloadStats,
-    extractingModels,
-    loading,
-    downloadModel,
-    cancelDownload,
-    selectModel,
-    deleteModel,
-    loadModels,
-  } = useModelStore();
-
-  useEffect(() => {
-    setOllamaUrlDraft(ollamaUrl);
-  }, [ollamaUrl]);
-
-  // click outside handler for language dropdown
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        languageDropdownRef.current &&
-        !languageDropdownRef.current.contains(event.target as Node)
-      ) {
-        setLanguageDropdownOpen(false);
-        setLanguageSearch("");
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // focus search input when dropdown opens
-  useEffect(() => {
-    if (languageDropdownOpen && languageSearchInputRef.current) {
-      languageSearchInputRef.current.focus();
-    }
-  }, [languageDropdownOpen]);
-
-  // filtered languages for dropdown (exclude "auto")
-  const filteredLanguages = useMemo(() => {
-    return LANGUAGES.filter(
-      (lang) =>
-        lang.value !== "auto" &&
-        lang.label.toLowerCase().includes(languageSearch.toLowerCase()),
-    );
-  }, [languageSearch]);
-
-  // Get selected language label
-  const selectedLanguageLabel = useMemo(() => {
-    if (languageFilter === "all") {
-      return t("settings.models.filters.allLanguages");
-    }
-    return LANGUAGES.find((lang) => lang.value === languageFilter)?.label || "";
-  }, [languageFilter, t]);
-
-  const getModelStatus = (modelId: string): ModelCardStatus => {
-    if (modelId in extractingModels) {
-      return "extracting";
-    }
-    if (modelId in downloadingModels) {
-      return "downloading";
-    }
-    if (switchingModelId === modelId) {
-      return "switching";
-    }
-    if (modelId === currentModel) {
-      return "active";
-    }
-    const model = models.find((m: ModelInfo) => m.id === modelId);
-    if (model?.is_downloaded) {
-      return "available";
-    }
-    return "downloadable";
-  };
-
-  const getDownloadProgress = (modelId: string): number | undefined => {
-    const progress = downloadProgress[modelId];
-    return progress?.percentage;
-  };
-
-  const getDownloadSpeed = (modelId: string): number | undefined => {
-    const stats = downloadStats[modelId];
-    return stats?.speed;
-  };
-
-  const handleModelSelect = async (modelId: string) => {
-    setSwitchingModelId(modelId);
-    try {
-      await selectModel(modelId);
-    } finally {
-      setSwitchingModelId(null);
-    }
-  };
-
-  const handleModelDownload = async (modelId: string) => {
-    await downloadModel(modelId);
-  };
-
-  const handleModelDelete = async (modelId: string) => {
-    const model = models.find((m: ModelInfo) => m.id === modelId);
-    const modelName = model?.name || modelId;
-    const isActive = modelId === currentModel;
-
-    const confirmed = await ask(
-      isActive
-        ? t("settings.models.deleteActiveConfirm", { modelName })
-        : t("settings.models.deleteConfirm", { modelName }),
-      {
-        title: t("settings.models.deleteTitle"),
-        kind: "warning",
-      },
-    );
-
-    if (confirmed) {
-      try {
-        await deleteModel(modelId);
-      } catch (err) {
-        console.error(`Failed to delete model ${modelId}:`, err);
-      }
-    }
-  };
-
-  const handleModelCancel = async (modelId: string) => {
-    try {
-      await cancelDownload(modelId);
-    } catch (err) {
-      console.error(`Failed to cancel download for ${modelId}:`, err);
-    }
-  };
-
-  const handleImportModel = async () => {
-    const file = await open({
-      multiple: false,
-      title: t("settings.models.importOnnxPickTitle"),
-      filters: [{ name: "ONNX encoder", extensions: ["onnx"] }],
-    });
-    if (!file) return;
-    // Derive the model directory from the selected file
-    const filePath = file as string;
-    const sep = filePath.includes("/") ? "/" : "\\";
-    const dir = filePath.substring(0, filePath.lastIndexOf(sep));
-    const result = await commands.importModel(dir);
-    if (result.status === "error") {
-      console.error(t("settings.models.importOnnxError", { error: result.error }));
-      alert(t("settings.models.importOnnxError", { error: result.error }));
-      return;
-    }
-    await loadModels();
-  };
-
-  // Filter models based on language filter
-  const filteredModels = useMemo(() => {
-    return models.filter((model: ModelInfo) => {
-      if (languageFilter !== "all") {
-        if (!modelSupportsLanguage(model, languageFilter)) return false;
-      }
-      return true;
-    });
-  }, [models, languageFilter]);
-
-  // Split filtered models into downloaded (including custom) and available sections
-  const { downloadedModels, availableModels } = useMemo(() => {
-    const downloaded: ModelInfo[] = [];
-    const available: ModelInfo[] = [];
-
-    for (const model of filteredModels) {
-      if (
-        model.is_custom ||
-        model.is_downloaded ||
-        model.id in downloadingModels ||
-        model.id in extractingModels
-      ) {
-        downloaded.push(model);
-      } else {
-        available.push(model);
-      }
-    }
-
-    // Sort: active model first, then non-custom, then custom at the bottom
-    downloaded.sort((a, b) => {
-      if (a.id === currentModel) return -1;
-      if (b.id === currentModel) return 1;
-      if (a.is_custom !== b.is_custom) return a.is_custom ? 1 : -1;
-      return 0;
-    });
-
-    return {
-      downloadedModels: downloaded,
-      availableModels: available,
-    };
-  }, [filteredModels, downloadingModels, extractingModels, currentModel]);
+  const loading = useModelStore((s) => s.loading);
+  const { facts, lists } = useModelEntries();
+  const { filters, setFilters, searching, matches } = useModelFilters();
+  const [more, setMore] = useState(false);
 
   if (loading) {
     return (
@@ -232,197 +65,131 @@ export const ModelsSettings: React.FC = () => {
     );
   }
 
+  const keep = (xs: typeof lists.yours) => xs.filter(matches);
+  const moreButton = !searching && lists.yours.length > YOURS_LIMIT && (
+    <button
+      type="button"
+      onClick={() => setMore((m) => !m)}
+      className="ms-[40px] mt-[2px] flex h-[28px] cursor-pointer items-center gap-[8px] rounded-[7px] px-[2px] text-small font-medium text-ink-2 hover:text-text focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary"
+    >
+      {more
+        ? t("settings.models.showFewer")
+        : t("settings.models.showMore", {
+            count: lists.yours.length - YOURS_LIMIT,
+          })}
+      <span
+        aria-hidden="true"
+        className={`inline-block size-[6px] shrink-0 border-e-[1.5px] border-b-[1.5px] border-current ${more ? "mt-[3px] -rotate-[135deg]" : "-mt-[3px] rotate-45"}`}
+      />
+    </button>
+  );
+
+  const sections: TableSection[] = searching
+    ? [
+        {
+          key: "yours",
+          label: t("settings.models.sections.yours"),
+          rows: keep(lists.yours),
+        },
+        {
+          key: "fits",
+          label: t("settings.models.sections.fits"),
+          rows: keep(lists.fits),
+        },
+        {
+          key: "partial",
+          label: t("modelTable.missingLanguage"),
+          rows: keep(lists.partial),
+        },
+        {
+          key: "untested",
+          label: t("settings.models.sections.untested"),
+          rows: filters.query.trim() ? keep(lists.untested) : [],
+          note: t("settings.models.untestedNote"),
+        },
+        {
+          key: "ollama",
+          label: t("settings.models.sections.ollama"),
+          rows: keep(lists.ollama),
+        },
+      ]
+    : [
+        {
+          key: "yours",
+          label: (
+            <>
+              {t("settings.models.sections.yours")}
+              <Rescan />
+            </>
+          ),
+          rows: more ? lists.yours : lists.yours.slice(0, YOURS_LIMIT),
+          after: lists.yours.length ? (
+            moreButton
+          ) : (
+            <Note>{t("settings.models.emptyYours")}</Note>
+          ),
+        },
+        {
+          key: "fits",
+          label: t("settings.models.sections.fits"),
+          rows: lists.fits,
+        },
+        {
+          key: "partial",
+          label: t("modelTable.missingLanguage"),
+          rows: lists.partial,
+        },
+        {
+          key: "ollama",
+          label: t("settings.models.sections.ollama"),
+          rows: lists.ollama,
+          after: <OllamaUrlSetting />,
+        },
+      ];
+
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-4">
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold mb-2">
-          {t("settings.models.title")}
-        </h1>
-        <p className="text-sm text-text/60">
-          {t("settings.models.description")}
-        </p>
+    <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
+      {/* The title, and across from it where to change the languages the
+          grades are for. */}
+      <div className="mb-[16px] flex flex-none items-center justify-between gap-[12px] px-[12px]">
+        <h1 className="text-xl font-semibold">{t("settings.models.title")}</h1>
+        {onChangeLanguages && (
+          <button
+            type="button"
+            onClick={onChangeLanguages}
+            className="shrink-0 cursor-pointer text-sm text-text underline decoration-line-strong underline-offset-[3px] hover:decoration-text focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary"
+          >
+            {t("settings.models.changeLanguages")}
+          </button>
+        )}
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-text/80">
-          {t("settings.models.ollamaUrl.title", {
-            defaultValue: "Ollama URL",
-          })}
-        </label>
-        <Input
-          value={ollamaUrlDraft}
-          onChange={(e) => setOllamaUrlDraft(e.target.value)}
-          onBlur={() => {
-            const next = ollamaUrlDraft.trim() || "http://localhost:11434";
-            setOllamaUrlDraft(next);
-            if (next !== ollamaUrl) {
-              void updateSetting("ollama_base_url", next);
-              void loadModels();
-            }
-          }}
-          placeholder="http://localhost:11434"
-        />
-        <p className="text-xs text-text/50">
-          {t("settings.models.ollamaUrl.description", {
-            defaultValue:
-              "Used for Gemma 4 speech-to-text. Pull gemma4:e2b or gemma4:e4b in Ollama first, or download below.",
-          })}
-        </p>
+      <div className="mx-[12px] mb-[16px] flex-none empty:hidden">
+        <RetiredModelsNotice />
       </div>
-      {filteredModels.length > 0 ? (
-        <div className="space-y-6">
-          {/* Downloaded Models Section — header always visible so filter stays accessible */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-text/60">
-                {t("settings.models.yourModels")}
-              </h2>
-              <div className="flex items-center gap-2">
-                {/* Import ONNX Model button */}
-                <button
-                  type="button"
-                  onClick={handleImportModel}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20 transition-colors"
-                >
-                  {t("settings.models.importOnnx")}
-                </button>
-                {/* Language filter dropdown */}
-                <div className="relative" ref={languageDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setLanguageDropdownOpen(!languageDropdownOpen)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                    languageFilter !== "all"
-                      ? "bg-logo-primary/20 text-logo-primary"
-                      : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
-                  }`}
-                >
-                  <Globe className="w-3.5 h-3.5" />
-                  <span className="max-w-[120px] truncate">
-                    {selectedLanguageLabel}
-                  </span>
-                  <ChevronDown
-                    className={`w-3.5 h-3.5 transition-transform ${
-                      languageDropdownOpen ? "rotate-180" : ""
-                    }`}
-                  />
-                </button>
-
-                {languageDropdownOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-56 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
-                    <div className="p-2 border-b border-mid-gray/40">
-                      <input
-                        ref={languageSearchInputRef}
-                        type="text"
-                        value={languageSearch}
-                        onChange={(e) => setLanguageSearch(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (
-                            e.key === "Enter" &&
-                            filteredLanguages.length > 0
-                          ) {
-                            setLanguageFilter(filteredLanguages[0].value);
-                            setLanguageDropdownOpen(false);
-                            setLanguageSearch("");
-                          } else if (e.key === "Escape") {
-                            setLanguageDropdownOpen(false);
-                            setLanguageSearch("");
-                          }
-                        }}
-                        placeholder={t(
-                          "settings.general.language.searchPlaceholder",
-                        )}
-                        className="w-full px-2 py-1 text-sm bg-mid-gray/10 border border-mid-gray/40 rounded-md focus:outline-none focus:ring-1 focus:ring-logo-primary"
-                      />
-                    </div>
-                    <div className="max-h-48 overflow-y-auto">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLanguageFilter("all");
-                          setLanguageDropdownOpen(false);
-                          setLanguageSearch("");
-                        }}
-                        className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
-                          languageFilter === "all"
-                            ? "bg-logo-primary/20 text-logo-primary font-semibold"
-                            : "hover:bg-mid-gray/10"
-                        }`}
-                      >
-                        {t("settings.models.filters.allLanguages")}
-                      </button>
-                      {filteredLanguages.map((lang) => (
-                        <button
-                          key={lang.value}
-                          type="button"
-                          onClick={() => {
-                            setLanguageFilter(lang.value);
-                            setLanguageDropdownOpen(false);
-                            setLanguageSearch("");
-                          }}
-                          className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
-                            languageFilter === lang.value
-                              ? "bg-logo-primary/20 text-logo-primary font-semibold"
-                              : "hover:bg-mid-gray/10"
-                          }`}
-                        >
-                          {lang.label}
-                        </button>
-                      ))}
-                      {filteredLanguages.length === 0 && (
-                        <div className="px-3 py-2 text-sm text-text/50 text-center">
-                          {t("settings.general.language.noResults")}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                </div>
-              </div>
-            </div>
-            {downloadedModels.map((model: ModelInfo) => (
-              <ModelCard
-                key={model.id}
-                model={model}
-                status={getModelStatus(model.id)}
-                onSelect={handleModelSelect}
-                onDownload={handleModelDownload}
-                onDelete={handleModelDelete}
-                onCancel={handleModelCancel}
-                downloadProgress={getDownloadProgress(model.id)}
-                downloadSpeed={getDownloadSpeed(model.id)}
-                showRecommended={false}
-              />
-            ))}
-          </div>
-
-          {/* Available Models Section */}
-          {availableModels.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-sm font-medium text-text/60">
-                {t("settings.models.availableModels")}
-              </h2>
-              {availableModels.map((model: ModelInfo) => (
-                <ModelCard
-                  key={model.id}
-                  model={model}
-                  status={getModelStatus(model.id)}
-                  onSelect={handleModelSelect}
-                  onDownload={handleModelDownload}
-                  onDelete={handleModelDelete}
-                  onCancel={handleModelCancel}
-                  downloadProgress={getDownloadProgress(model.id)}
-                  downloadSpeed={getDownloadSpeed(model.id)}
-                  showRecommended={false}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="text-center py-8 text-text/50">
-          {t("settings.models.noModelsMatch")}
-        </div>
-      )}
+      <ModelTable
+        grading={facts}
+        filters={filters}
+        setFilters={setFilters}
+        // "Yours" always shows at rest; a search hides empty sections.
+        sections={sections.filter(
+          (s) =>
+            s.rows.length ||
+            ((s.key === "yours" || s.key === "ollama") && !searching),
+        )}
+        renderRow={(e) => <ModelRow key={e.id} entry={e} />}
+        actionsHead={<Legend tier={facts.tier} />}
+        footer={
+          !searching &&
+          lists.untested.length > 0 && (
+            <Note>
+              {t("settings.models.untestedHidden", {
+                count: lists.untested.length,
+              })}
+            </Note>
+          )
+        }
+        thinEdge
+      />
     </div>
   );
 };

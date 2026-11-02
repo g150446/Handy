@@ -2,13 +2,13 @@ import { test, expect } from "@playwright/test";
 
 /**
  * Model Download E2E Tests
- * 
+ *
  * NOTE: Full download testing requires the Tauri app to be running with the Rust backend.
  * These tests run against the Vite dev server only, which doesn't have access to:
  * - Rust commands (downloadModel, getAvailableModels, etc.)
  * - File system operations
  * - Actual HTTP downloads
- * 
+ *
  * For complete E2E testing, use `tauri-driver` with WebDriver:
  * https://tauri.app/v2/guides/testing/webdriver/
  */
@@ -30,7 +30,7 @@ test.describe("Frontend Components (Vite only)", () => {
 test.describe("Model Download - Documentation", () => {
   test("README: How to test model downloads", async () => {
     // This is a documentation test explaining how to properly test downloads
-    
+
     console.log(`
 === Model Download Testing Guide ===
 
@@ -69,7 +69,7 @@ To test the Parakeet V3 download functionality:
 
 ===================================
     `);
-    
+
     expect(true).toBe(true); // Placeholder assertion
   });
 });

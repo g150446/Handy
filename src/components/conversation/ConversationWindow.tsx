@@ -73,7 +73,8 @@ export const ConversationWindow = () => {
           const snapshot = event.payload;
           setMode(snapshot);
 
-          const sessionChanged = snapshot.session_id !== lastSessionIdRef.current;
+          const sessionChanged =
+            snapshot.session_id !== lastSessionIdRef.current;
           lastSessionIdRef.current = snapshot.session_id;
           void sessionChanged;
         },
@@ -95,9 +96,12 @@ export const ConversationWindow = () => {
   useEffect(() => {
     void refreshMode();
 
-    const intervalId = window.setInterval(() => {
-      void refreshMode();
-    }, mode?.active ? 1000 : 3000);
+    const intervalId = window.setInterval(
+      () => {
+        void refreshMode();
+      },
+      mode?.active ? 1000 : 3000,
+    );
 
     const handleFocus = () => {
       void refreshMode();
@@ -119,7 +123,10 @@ export const ConversationWindow = () => {
     if (currentCount > prevCount) {
       const lastMsg = messages[currentCount - 1];
       if (lastMsg?.role === "assistant" && lastAssistantRef.current) {
-        lastAssistantRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+        lastAssistantRef.current.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
       }
     }
 
@@ -153,16 +160,16 @@ export const ConversationWindow = () => {
       dir={direction}
       className="h-screen flex flex-col bg-background text-text"
     >
-      <div className="border-b border-mid-gray/20 px-3 py-2 space-y-1">
+      <div className="border-b border-ink-3/20 px-3 py-2 space-y-1">
         <div className="flex items-center justify-between gap-2">
           <h1 className="text-sm font-semibold truncate">
             {t("control.title")}
           </h1>
-          <div className="shrink-0 rounded-full bg-mid-gray/10 px-2 py-0.5 text-xs font-medium">
+          <div className="shrink-0 rounded-full bg-ink-3/10 px-2 py-0.5 text-xs font-medium">
             {statusText}
           </div>
         </div>
-        <p className="text-[11px] text-mid-gray leading-4">
+        <p className="text-[11px] text-ink-3 leading-4">
           {t("control.subtitle")}
         </p>
       </div>
@@ -182,7 +189,7 @@ export const ConversationWindow = () => {
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center">
-            <p className="text-xs text-mid-gray text-center">
+            <p className="text-xs text-ink-3 text-center">
               {t("control.empty.title")}
             </p>
           </div>
@@ -203,11 +210,11 @@ export const ConversationWindow = () => {
                   <div
                     className={`max-w-[90%] rounded-xl border px-3 py-2 ${
                       isAssistant
-                        ? "border-mid-gray/20 bg-mid-gray/10"
+                        ? "border-ink-3/20 bg-ink-3/10"
                         : "border-logo-primary/20 bg-logo-primary/15"
                     }`}
                   >
-                    <div className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-mid-gray">
+                    <div className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-ink-3">
                       {roleIcon(message.role)}
                       <span>
                         {isAssistant
@@ -225,7 +232,7 @@ export const ConversationWindow = () => {
 
             {isSending && (
               <div className="flex justify-start">
-                <div className="rounded-xl border border-mid-gray/20 bg-mid-gray/10 px-3 py-2 text-xs text-mid-gray">
+                <div className="rounded-xl border border-ink-3/20 bg-ink-3/10 px-3 py-2 text-xs text-ink-3">
                   <span className="inline-flex items-center gap-1.5">
                     <LoaderCircle className="h-3 w-3 animate-spin" />
                     {t("control.sending")}
@@ -245,8 +252,8 @@ export const ConversationWindow = () => {
         </div>
       )}
 
-      <div className="border-t border-mid-gray/20 px-3 py-2">
-        <p className="text-[11px] text-mid-gray leading-4">
+      <div className="border-t border-ink-3/20 px-3 py-2">
+        <p className="text-[11px] text-ink-3 leading-4">
           {t("control.help.toggleBack")}
         </p>
       </div>

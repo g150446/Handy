@@ -53,9 +53,7 @@ use uuid::{uuid, Uuid};
 pub const BLE_DEVICE_NAME: &str = "HarnessNode";
 
 fn is_known_ble_device(name: &str) -> bool {
-    name.contains("AtomEchoS3R")
-        || name.contains("HarnessNode")
-        || name.contains("XIAOVoice")
+    name.contains("AtomEchoS3R") || name.contains("HarnessNode") || name.contains("XIAOVoice")
 }
 
 fn toggle_preferred_control_from_ble(
@@ -372,8 +370,7 @@ impl BleManager {
                 )
                 .await?;
             central.stop_scan().await?;
-            let device =
-                matched.ok_or_else(|| anyhow::anyhow!("Device not found: {}", address))?;
+            let device = matched.ok_or_else(|| anyhow::anyhow!("Device not found: {}", address))?;
             self.do_connect(device, central).await
         }
         .await;
@@ -580,8 +577,7 @@ impl BleManager {
                                     *discard_next_stop_event.lock().unwrap() = false;
                                     debug!(
                                         "BLE session start (control_active={}, session_id={})",
-                                        control_snapshot.active,
-                                        control_snapshot.session_id
+                                        control_snapshot.active, control_snapshot.session_id
                                     );
 
                                     // Follow FW session (single tap/click or gesture).
@@ -678,13 +674,14 @@ impl BleManager {
                                 if *device_button_active.lock().unwrap() {
                                     let control_snapshot =
                                         crate::control::get_mode_snapshot(&app_handle);
-                                    info!("BLE event: recording stopped (0x02) – end device session");
+                                    info!(
+                                        "BLE event: recording stopped (0x02) – end device session"
+                                    );
                                     // is_recording stays true so in-flight packets are captured;
                                     // stop_recording_command() will clear it.
                                     debug!(
                                         "BLE session stop (control_active={}, session_id={})",
-                                        control_snapshot.active,
-                                        control_snapshot.session_id
+                                        control_snapshot.active, control_snapshot.session_id
                                     );
                                     send_ble_button_event(&app_handle, false);
                                 } else {
@@ -727,7 +724,8 @@ impl BleManager {
                             }
                             0x10 => {
                                 if data.len() >= 7 {
-                                    let z = f32::from_le_bytes([data[3], data[4], data[5], data[6]]);
+                                    let z =
+                                        f32::from_le_bytes([data[3], data[4], data[5], data[6]]);
                                     info!("BLE debug: motion active z={:.2}", z);
                                 } else {
                                     info!("BLE debug: motion active");
@@ -735,7 +733,8 @@ impl BleManager {
                             }
                             0x11 => {
                                 if data.len() >= 7 {
-                                    let z = f32::from_le_bytes([data[3], data[4], data[5], data[6]]);
+                                    let z =
+                                        f32::from_le_bytes([data[3], data[4], data[5], data[6]]);
                                     info!("BLE debug: motion settled z={:.2}", z);
                                 } else {
                                     info!("BLE debug: motion settled");
@@ -751,11 +750,12 @@ impl BleManager {
                             0x32 => {
                                 // The other client disconnected; reclaim primary role so
                                 // Handy continues to receive audio in single-connection mode.
-                                info!("BLE event: peer disconnected (0x32) – reclaiming primary role");
+                                info!(
+                                    "BLE event: peer disconnected (0x32) – reclaiming primary role"
+                                );
                                 let ble_clone = ble.clone();
                                 tauri::async_runtime::spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_millis(200))
-                                        .await;
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                                     if let Err(e) = ble_clone.claim_primary_role().await {
                                         warn!(
                                             "BLE: failed to reclaim primary after peer disconnect: {e}"
@@ -912,7 +912,7 @@ impl BleManager {
                         info!("BLE auto-reconnect succeeded on attempt {}", attempt);
                         ble.app_handle
                             .state::<Arc<crate::managers::transcription::TranscriptionManager>>()
-                            .initiate_model_load();
+                            .initiate_model_load(false);
                         break;
                     }
                     Ok(Err(err)) => {
@@ -1008,7 +1008,7 @@ impl BleManager {
                     info!("BLE resume recovery reconnect succeeded");
                     ble.app_handle
                         .state::<Arc<crate::managers::transcription::TranscriptionManager>>()
-                        .initiate_model_load();
+                        .initiate_model_load(false);
                 }
                 Ok(Err(err)) => {
                     warn!("BLE resume recovery reconnect failed: {err}");
@@ -1271,7 +1271,9 @@ fn send_ble_button_event(app: &tauri::AppHandle, is_pressed: bool) {
             BLE_BUTTON_BINDING,
             BLE_BUTTON_SOURCE,
             is_pressed,
-            true, // push_to_talk = true: start on press, stop+transcribe on release
+            // Start on press, stop+transcribe on release.
+            crate::settings::ShortcutActivation::PushToTalk,
+            std::time::Duration::ZERO,
         );
     } else {
         warn!("BLE button event: TranscriptionCoordinator not available");

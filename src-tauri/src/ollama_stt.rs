@@ -98,7 +98,7 @@ pub fn keep_alive_for(timeout: ModelUnloadTimeout) -> Value {
         ModelUnloadTimeout::Min10 => json!("10m"),
         ModelUnloadTimeout::Min15 => json!("15m"),
         ModelUnloadTimeout::Hour1 => json!("1h"),
-        ModelUnloadTimeout::Sec5 => json!("5s"),
+        ModelUnloadTimeout::Sec15 => json!("15s"),
     }
 }
 

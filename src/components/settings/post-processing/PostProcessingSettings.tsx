@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { RefreshCcw } from "lucide-react";
-import { commands } from "@/bindings";
+import { commands, type PostProcessApiFormat } from "@/bindings";
 
 import { Alert } from "../../ui/Alert";
 import {
@@ -52,6 +52,40 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
         ) : null
       ) : (
         <>
+          {state.isCustomProvider && (
+            <SettingContainer
+              title={t("settings.postProcessing.api.apiFormat.title")}
+              description={t(
+                "settings.postProcessing.api.apiFormat.description",
+              )}
+              descriptionMode="tooltip"
+              layout="horizontal"
+              grouped={true}
+            >
+              <Dropdown
+                options={[
+                  {
+                    value: "openai",
+                    label: t(
+                      "settings.postProcessing.api.apiFormat.options.openai",
+                    ),
+                  },
+                  {
+                    value: "anthropic",
+                    label: t(
+                      "settings.postProcessing.api.apiFormat.options.anthropic",
+                    ),
+                  },
+                ]}
+                selectedValue={state.apiFormat}
+                onSelect={(value) =>
+                  state.handleApiFormatChange(value as PostProcessApiFormat)
+                }
+                disabled={state.isApiFormatUpdating}
+              />
+            </SettingContainer>
+          )}
+
           {state.selectedProvider?.id === "custom" && (
             <SettingContainer
               title={t("settings.postProcessing.api.baseUrl.title")}
@@ -64,9 +98,13 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
                 <BaseUrlField
                   value={state.baseUrl}
                   onBlur={state.handleBaseUrlChange}
-                  placeholder={t(
-                    "settings.postProcessing.api.baseUrl.placeholder",
-                  )}
+                  placeholder={
+                    state.apiFormat === "anthropic"
+                      ? t(
+                          "settings.postProcessing.api.baseUrl.placeholderAnthropic",
+                        )
+                      : t("settings.postProcessing.api.baseUrl.placeholder")
+                  }
                   disabled={state.isBaseUrlUpdating}
                   className="min-w-[380px]"
                 />
@@ -258,7 +296,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
       grouped={true}
     >
       <div className="space-y-3">
-        <div className="flex gap-2">
+        <div className="flex gap-2 min-w-0">
           <Dropdown
             selectedValue={selectedPromptId || null}
             options={prompts.map((p) => ({
@@ -274,13 +312,14 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
             disabled={
               isUpdating("post_process_selected_prompt_id") || isCreating
             }
-            className="flex-1"
+            className="flex-1 min-w-0"
           />
           <Button
             onClick={handleStartCreate}
             variant="primary"
             size="md"
             disabled={isCreating}
+            className="shrink-0"
           >
             {t("settings.postProcessing.prompts.createNew")}
           </Button>
@@ -314,12 +353,12 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
               />
-              <p
-                className="text-xs text-mid-gray/70"
-                dangerouslySetInnerHTML={{
-                  __html: t("settings.postProcessing.prompts.promptTip"),
-                }}
-              />
+              <p className="text-xs text-ink-3">
+                <Trans
+                  i18nKey="settings.postProcessing.prompts.promptTip"
+                  components={{ code: <code /> }}
+                />
+              </p>
             </div>
 
             <div className="flex gap-2 pt-2">
@@ -344,8 +383,8 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
         )}
 
         {!isCreating && !selectedPrompt && (
-          <div className="p-3 bg-mid-gray/5 rounded-md border border-mid-gray/20">
-            <p className="text-sm text-mid-gray">
+          <div className="p-3 bg-wash rounded-md border border-line">
+            <p className="text-sm text-ink-3">
               {hasPrompts
                 ? t("settings.postProcessing.prompts.selectToEdit")
                 : t("settings.postProcessing.prompts.createFirst")}
@@ -381,12 +420,12 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
               />
-              <p
-                className="text-xs text-mid-gray/70"
-                dangerouslySetInnerHTML={{
-                  __html: t("settings.postProcessing.prompts.promptTip"),
-                }}
-              />
+              <p className="text-xs text-ink-3">
+                <Trans
+                  i18nKey="settings.postProcessing.prompts.promptTip"
+                  components={{ code: <code /> }}
+                />
+              </p>
             </div>
 
             <div className="flex gap-2 pt-2">
@@ -443,8 +482,6 @@ export const PostProcessingSettings: React.FC = () => {
       <SettingsGroup title={t("settings.postProcessing.prompts.title")}>
         <PostProcessingSettingsPrompts />
       </SettingsGroup>
-
-
     </div>
   );
 };

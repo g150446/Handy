@@ -1,5 +1,5 @@
 use crate::audio_feedback;
-use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
+use crate::audio_toolkit::audio::list_output_devices;
 use crate::ble::{BleManager, BleStatus};
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
 use crate::managers::transcription::TranscriptionManager;
@@ -10,6 +10,12 @@ use specta::Type;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
+#[cfg(target_os = "windows")]
+use winreg::{
+    enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
+    RegKey, HKEY,
+};
+
 #[derive(Serialize, Type)]
 pub struct CustomSounds {
     start: bool,
@@ -18,7 +24,7 @@ pub struct CustomSounds {
 
 fn custom_sound_exists(app: &AppHandle, sound_type: &str) -> bool {
     crate::portable::resolve_app_data(app, &format!("custom_{}.wav", sound_type))
-        .map_or(false, |path| path.exists())
+        .is_ok_and(|path| path.exists())
 }
 
 #[tauri::command]
@@ -37,23 +43,154 @@ pub struct AudioDevice {
     pub is_default: bool,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionAccess {
+    Allowed,
+    Denied,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct WindowsMicrophonePermissionStatus {
+    pub supported: bool,
+    pub overall_access: PermissionAccess,
+    pub device_access: PermissionAccess,
+    pub app_access: PermissionAccess,
+    pub desktop_app_access: PermissionAccess,
+}
+
+#[cfg(target_os = "windows")]
+fn read_registry_permission_access(root_hkey: HKEY, path: &str) -> PermissionAccess {
+    let root = RegKey::predef(root_hkey);
+    let Ok(key) = root.open_subkey(path) else {
+        return PermissionAccess::Unknown;
+    };
+
+    let Ok(value) = key.get_value::<String, _>("Value") else {
+        return PermissionAccess::Unknown;
+    };
+
+    match value.to_ascii_lowercase().as_str() {
+        "allow" => PermissionAccess::Allowed,
+        "deny" => PermissionAccess::Denied,
+        _ => PermissionAccess::Unknown,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_windows_microphone_permission_status_impl() -> WindowsMicrophonePermissionStatus {
+    const MICROPHONE_PATH: &str =
+        "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone";
+    const DESKTOP_APPS_PATH: &str =
+        "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged";
+
+    let device_access = read_registry_permission_access(HKEY_LOCAL_MACHINE, MICROPHONE_PATH);
+    let app_access = read_registry_permission_access(HKEY_CURRENT_USER, MICROPHONE_PATH);
+    let desktop_app_access = read_registry_permission_access(HKEY_CURRENT_USER, DESKTOP_APPS_PATH);
+
+    // Handy is a desktop app, so the NonPackaged key (desktop_app_access) is
+    // the relevant permission scope. The UWP master key (app_access) can be
+    // "deny" on systems with debloaters (e.g. O&O ShutUp10) without actually
+    // blocking desktop app microphone access.
+    let overall_access = if device_access == PermissionAccess::Denied {
+        PermissionAccess::Denied
+    } else if desktop_app_access == PermissionAccess::Denied {
+        PermissionAccess::Denied
+    } else if desktop_app_access == PermissionAccess::Allowed {
+        PermissionAccess::Allowed
+    } else if app_access == PermissionAccess::Denied {
+        PermissionAccess::Denied
+    } else if device_access == PermissionAccess::Allowed && app_access == PermissionAccess::Allowed
+    {
+        PermissionAccess::Allowed
+    } else {
+        PermissionAccess::Unknown
+    };
+
+    WindowsMicrophonePermissionStatus {
+        supported: true,
+        overall_access,
+        device_access,
+        app_access,
+        desktop_app_access,
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
-pub fn update_microphone_mode(app: AppHandle, always_on: bool) -> Result<(), String> {
-    // Update settings
+pub fn get_windows_microphone_permission_status() -> WindowsMicrophonePermissionStatus {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_microphone_permission_status_impl()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        WindowsMicrophonePermissionStatus {
+            supported: false,
+            overall_access: PermissionAccess::Unknown,
+            device_access: PermissionAccess::Unknown,
+            app_access: PermissionAccess::Unknown,
+            desktop_app_access: PermissionAccess::Unknown,
+        }
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn open_microphone_privacy_settings() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:privacy-microphone"])
+            .spawn()
+            .map_err(|e| format!("Failed to open Windows microphone privacy settings: {}", e))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+            .spawn()
+            .map_err(|e| format!("Failed to open macOS microphone privacy settings: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Err(
+            "Opening microphone privacy settings is only supported on Windows and macOS"
+                .to_string(),
+        )
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_microphone_mode(app: AppHandle, always_on: bool) -> Result<(), String> {
+    // Update settings (fast, stays inline)
     let mut settings = get_settings(&app);
     settings.always_on_microphone = always_on;
     write_settings(&app, settings);
 
-    // Update the audio manager mode
-    let rm = app.state::<Arc<AudioRecordingManager>>();
+    // Update the audio manager mode. update_mode can stop/start the cpal stream
+    // (blocking CoreAudio) and takes the manager std mutexes — run it on a
+    // blocking thread, NOT inline on the webview/main run loop (a slow device
+    // open/close would freeze the UI).
+    let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
     let new_mode = if always_on {
         MicrophoneMode::AlwaysOn
     } else {
         MicrophoneMode::OnDemand
     };
 
-    rm.update_mode(new_mode)
+    tokio::task::spawn_blocking(move || rm.update_mode(new_mode))
+        .await
+        .map_err(|e| format!("audio task join failed: {}", e))?
         .map_err(|e| format!("Failed to update microphone mode: {}", e))
 }
 
@@ -66,28 +203,39 @@ pub fn get_microphone_mode(app: AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_available_microphones() -> Result<Vec<AudioDevice>, String> {
-    let devices =
-        list_input_devices().map_err(|e| format!("Failed to list audio devices: {}", e))?;
+pub async fn get_available_microphones() -> Result<Vec<AudioDevice>, String> {
+    // cpal device enumeration can stall — run it off the webview/main run loop.
+    tokio::task::spawn_blocking(|| {
+        let devices = handy_recorder::list_input_devices()
+            .map_err(|e| format!("Failed to list audio devices: {}", e))?;
 
-    let mut result = vec![AudioDevice {
-        index: "default".to_string(),
-        name: "Default".to_string(),
-        is_default: true,
-    }];
+        let mut result = vec![AudioDevice {
+            index: "default".to_string(),
+            name: "Default".to_string(),
+            is_default: true,
+        }];
 
-    result.extend(devices.into_iter().map(|d| AudioDevice {
-        index: d.index,
-        name: d.name,
-        is_default: false, // The explicit default is handled separately
-    }));
+        // PulseAudio monitor sources record a speaker's output, not a microphone.
+        result.extend(
+            devices
+                .into_iter()
+                .filter(|d| !d.is_monitor)
+                .map(|d| AudioDevice {
+                    index: d.id,
+                    name: d.name,
+                    is_default: false, // The explicit default is handled separately
+                }),
+        );
 
-    Ok(result)
+        Ok::<_, String>(result)
+    })
+    .await
+    .map_err(|e| format!("audio task join failed: {}", e))?
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_selected_microphone(app: AppHandle, device_name: String) -> Result<(), String> {
+pub async fn set_selected_microphone(app: AppHandle, device_name: String) -> Result<(), String> {
     let mut settings = get_settings(&app);
     settings.selected_microphone = if device_name == "default" {
         None
@@ -96,12 +244,14 @@ pub fn set_selected_microphone(app: AppHandle, device_name: String) -> Result<()
     };
     write_settings(&app, settings);
 
-    // Update the audio manager to use the new device
-    let rm = app.state::<Arc<AudioRecordingManager>>();
-    rm.update_selected_device()
-        .map_err(|e| format!("Failed to update selected device: {}", e))?;
-
-    Ok(())
+    // Update the audio manager to use the new device. update_selected_device
+    // can restart the cpal stream (blocking CoreAudio) — run it on a blocking
+    // thread, not inline on the webview/main run loop.
+    let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || rm.update_selected_device())
+        .await
+        .map_err(|e| format!("audio task join failed: {}", e))?
+        .map_err(|e| format!("Failed to update selected device: {}", e))
 }
 
 #[tauri::command]
@@ -115,23 +265,28 @@ pub fn get_selected_microphone(app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_available_output_devices() -> Result<Vec<AudioDevice>, String> {
-    let devices =
-        list_output_devices().map_err(|e| format!("Failed to list output devices: {}", e))?;
+pub async fn get_available_output_devices() -> Result<Vec<AudioDevice>, String> {
+    // cpal device enumeration can stall — run it off the webview/main run loop.
+    tokio::task::spawn_blocking(|| {
+        let devices =
+            list_output_devices().map_err(|e| format!("Failed to list output devices: {}", e))?;
 
-    let mut result = vec![AudioDevice {
-        index: "default".to_string(),
-        name: "Default".to_string(),
-        is_default: true,
-    }];
+        let mut result = vec![AudioDevice {
+            index: "default".to_string(),
+            name: "Default".to_string(),
+            is_default: true,
+        }];
 
-    result.extend(devices.into_iter().map(|d| AudioDevice {
-        index: d.index,
-        name: d.name,
-        is_default: false, // The explicit default is handled separately
-    }));
+        result.extend(devices.into_iter().map(|d| AudioDevice {
+            index: d.index,
+            name: d.name,
+            is_default: false, // The explicit default is handled separately
+        }));
 
-    Ok(result)
+        Ok::<_, String>(result)
+    })
+    .await
+    .map_err(|e| format!("audio task join failed: {}", e))?
 }
 
 #[tauri::command]
@@ -231,7 +386,7 @@ pub async fn ble_connect_first(app: AppHandle, scan_secs: u64) -> Result<BleStat
     // Without this, model loading starts on first button press and can starve the
     // BLE event loop (causing disconnection).
     app.state::<Arc<TranscriptionManager>>()
-        .initiate_model_load();
+        .initiate_model_load(false);
     let status = ble.status();
     // Persist the device address so auto-connect works on next launch.
     if let Some(ref addr) = status.device_address {
@@ -258,7 +413,7 @@ pub async fn ble_connect_by_address(app: AppHandle, address: String) -> Result<B
         .map_err(|e| e.to_string())?;
     // Pre-load transcription model so it's ready before the user presses the button.
     app.state::<Arc<TranscriptionManager>>()
-        .initiate_model_load();
+        .initiate_model_load(false);
     // Persist the device address so auto-connect works on next launch.
     let status = ble.status();
     if let Some(ref connected_address) = status.device_address {
@@ -291,9 +446,65 @@ pub fn set_audio_source(app: AppHandle, source: AudioSource) -> Result<(), Strin
     Ok(())
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn get_microphone_channels(device_name: String) -> Result<u16, String> {
+    // Device enumeration can stall, so keep it off the webview/main run loop.
+    tokio::task::spawn_blocking(move || {
+        let devices = handy_recorder::list_input_devices()
+            .map_err(|e| format!("Failed to list audio devices: {e}"))?;
+        let device = if device_name.eq_ignore_ascii_case("default") {
+            devices.into_iter().find(|device| device.is_default)
+        } else {
+            devices
+                .into_iter()
+                .find(|device| device.name == device_name)
+        };
+        // `channels` is unknown only on ALSA, where reading it opens the device.
+        Ok(device.and_then(|device| device.channels).unwrap_or(1))
+    })
+    .await
+    .map_err(|e| format!("audio task join failed: {e}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_selected_channel(app: AppHandle, channel: Option<u16>) -> Result<(), String> {
+    // Restarting cpal can block, so keep it off the webview/main run loop. Apply
+    // the runtime change before persisting it so a rejected active-recording
+    // change does not become effective on the next launch.
+    let manager = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || manager.update_selected_channel(channel))
+        .await
+        .map_err(|e| format!("audio task join failed: {e}"))?
+        .map_err(|e| format!("Failed to update channel selection: {e}"))?;
+
+    let mut settings = get_settings(&app);
+    settings.selected_channel = channel;
+    write_settings(&app, settings);
+    Ok(())
+}
+
 /// Get the currently configured audio source.
 #[tauri::command]
 #[specta::specta]
 pub fn get_audio_source(app: AppHandle) -> AudioSource {
     get_settings(&app).audio_source
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn change_airpods_mode_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    // Same ordering as `set_selected_channel`: reopen off the main run loop,
+    // persist only once the reopen succeeds.
+    let manager = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || manager.update_airpods_mode(enabled))
+        .await
+        .map_err(|e| format!("audio task join failed: {e}"))?
+        .map_err(|e| format!("Failed to update AirPods mode: {e}"))?;
+
+    let mut settings = get_settings(&app);
+    settings.airpods_mode = enabled;
+    write_settings(&app, settings);
+    Ok(())
 }

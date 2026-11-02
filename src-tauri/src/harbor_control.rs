@@ -625,20 +625,6 @@ pub fn stt_context_words(app: &AppHandle) -> Vec<String> {
         .clone()
 }
 
-/// Whisper initial_prompt glossary built from cached Harbor workspace labels.
-pub fn whisper_initial_prompt(app: &AppHandle) -> Option<String> {
-    let words = stt_context_words(app);
-    if words.is_empty() {
-        return None;
-    }
-    // Whisper treats this as preceding text; keep it short and name-heavy.
-    let mut prompt =
-        String::from("Terminal Harbor workspaces and agents (prefer these spellings): ");
-    prompt.push_str(&words.join(", "));
-    prompt.push('.');
-    Some(prompt)
-}
-
 fn labels_from_workspaces(workspaces: &[WorkspaceDto]) -> Vec<String> {
     let mut labels = Vec::new();
     let mut push_unique = |value: &str| {

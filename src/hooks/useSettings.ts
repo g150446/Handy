@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
-import type { AppSettings as Settings, AudioDevice } from "@/bindings";
+import type {
+  AppSettings as Settings,
+  AudioDevice,
+  PostProcessApiFormat,
+} from "@/bindings";
 
 interface UseSettingsReturn {
   // State
@@ -11,6 +15,7 @@ interface UseSettingsReturn {
   outputDevices: AudioDevice[];
   audioFeedbackEnabled: boolean;
   postProcessModelOptions: Record<string, string[]>;
+  updateChecksLocked: boolean | null;
 
   // Actions
   updateSetting: <K extends keyof Settings>(
@@ -34,6 +39,10 @@ interface UseSettingsReturn {
   updatePostProcessBaseUrl: (
     providerId: string,
     baseUrl: string,
+  ) => Promise<void>;
+  updatePostProcessApiFormat: (
+    providerId: string,
+    apiFormat: PostProcessApiFormat,
   ) => Promise<void>;
   updatePostProcessApiKey: (
     providerId: string,
@@ -61,6 +70,7 @@ export const useSettings = (): UseSettingsReturn => {
     outputDevices: store.outputDevices,
     audioFeedbackEnabled: store.settings?.audio_feedback || false,
     postProcessModelOptions: store.postProcessModelOptions,
+    updateChecksLocked: store.updateChecksLocked,
     updateSetting: store.updateSetting,
     resetSetting: store.resetSetting,
     refreshSettings: store.refreshSettings,
@@ -71,6 +81,7 @@ export const useSettings = (): UseSettingsReturn => {
     getSetting: store.getSetting,
     setPostProcessProvider: store.setPostProcessProvider,
     updatePostProcessBaseUrl: store.updatePostProcessBaseUrl,
+    updatePostProcessApiFormat: store.updatePostProcessApiFormat,
     updatePostProcessApiKey: store.updatePostProcessApiKey,
     updatePostProcessModel: store.updatePostProcessModel,
     fetchPostProcessModels: store.fetchPostProcessModels,

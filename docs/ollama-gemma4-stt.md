@@ -88,11 +88,11 @@ Unload timeout:
 | ファイル | 役割 |
 |----------|------|
 | `src-tauri/src/ollama_stt.rs` | URL 正規化、tags / pull / chat、プロンプト |
-| `src-tauri/src/managers/model.rs` | `EngineType::Ollama`、カタログ、pull、tags 同期 |
+| `src-tauri/src/managers/model.rs` | `ModelSource::Ollama`、カタログ、pull、tags 同期 |
 | `src-tauri/src/managers/transcription.rs` | load / transcribe / unload |
 | `src-tauri/src/audio_toolkit/audio/utils.rs` | `encode_wav_bytes` |
 | `src-tauri/src/settings.rs` | `ollama_base_url` |
-| `src/components/settings/models/ModelsSettings.tsx` | Ollama URL 欄 |
+| `src/components/settings/models/OllamaUrlSetting.tsx` | Ollama URL 欄（モデル画面の Ollama セクション） |
 
 ---
 

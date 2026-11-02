@@ -25,7 +25,9 @@ export const HarborPairing: React.FC<{
 
   const refresh = useCallback(async () => {
     try {
-      const next = await invoke<HarborPairStatus>("get_terminal_harbor_pairing");
+      const next = await invoke<HarborPairStatus>(
+        "get_terminal_harbor_pairing",
+      );
       setStatus(next);
     } catch (error) {
       console.error("Failed to load Terminal Harbor pairing:", error);
@@ -109,9 +111,9 @@ export const HarborPairing: React.FC<{
       layout="stacked"
     >
       <div className="space-y-2 w-full">
-        <p className="text-xs text-mid-gray">{statusLabel}</p>
+        <p className="text-xs text-ink-3">{statusLabel}</p>
         {status?.base_url && (
-          <p className="text-[11px] text-mid-gray/80 break-all">
+          <p className="text-[11px] text-ink-3/80 break-all">
             {status.base_url}
           </p>
         )}

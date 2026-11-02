@@ -9,8 +9,8 @@ interface BleDeviceSelectorProps {
   grouped?: boolean;
 }
 
-export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
-  React.memo(({ descriptionMode = "tooltip", grouped = false }) => {
+export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> = React.memo(
+  ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
 
     const [audioSource, setAudioSource] = useState<AudioSource>("microphone");
@@ -113,7 +113,11 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
     const handleDisconnect = async () => {
       const result = await commands.bleDisconnect();
       if (result.status === "ok") {
-        setBleStatus({ connected: false, device_name: null, device_address: null });
+        setBleStatus({
+          connected: false,
+          device_name: null,
+          device_address: null,
+        });
         // Switch back to microphone source
         await handleSourceChange("microphone");
       }
@@ -134,7 +138,7 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
             className={`flex-1 py-1.5 px-3 rounded text-sm font-medium transition-colors ${
               audioSource === "microphone"
                 ? "bg-logo-primary text-white"
-                : "bg-mid-gray/10 text-mid-gray hover:bg-mid-gray/20"
+                : "bg-ink-3/10 text-ink-3 hover:bg-ink-3/20"
             }`}
           >
             {t("settings.sound.ble.source.microphone")}
@@ -144,7 +148,7 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
             className={`flex-1 py-1.5 px-3 rounded text-sm font-medium transition-colors ${
               audioSource === "ble"
                 ? "bg-logo-primary text-white"
-                : "bg-mid-gray/10 text-mid-gray hover:bg-mid-gray/20"
+                : "bg-ink-3/10 text-ink-3 hover:bg-ink-3/20"
             }`}
           >
             {t("settings.sound.ble.source.ble")}
@@ -158,10 +162,10 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
             <div className="flex items-center gap-2">
               <span
                 className={`inline-block w-2 h-2 rounded-full ${
-                  bleStatus.connected ? "bg-green-500" : "bg-mid-gray/40"
+                  bleStatus.connected ? "bg-green-500" : "bg-ink-3/40"
                 }`}
               />
-              <span className="text-sm text-mid-gray">
+              <span className="text-sm text-ink-3">
                 {bleStatus.connected
                   ? `${t("settings.sound.ble.connected")}: ${bleStatus.device_name ?? ""}`
                   : t("settings.sound.ble.disconnected")}
@@ -175,11 +179,13 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
                   <select
                     value={selectedDevice}
                     onChange={(e) => setSelectedDevice(e.target.value)}
-                    className="flex-1 text-sm bg-background border border-mid-gray/30 rounded px-2 py-1.5 text-foreground"
+                    className="flex-1 text-sm bg-background border border-ink-3/30 rounded px-2 py-1.5 text-text"
                     disabled={isScanning || scannedDevices.length === 0}
                   >
                     {scannedDevices.length === 0 ? (
-                      <option value="">{t("settings.sound.ble.selectDevice")}</option>
+                      <option value="">
+                        {t("settings.sound.ble.selectDevice")}
+                      </option>
                     ) : (
                       scannedDevices.map((d) => (
                         <option key={d} value={d}>
@@ -191,7 +197,7 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
                   <button
                     onClick={handleScan}
                     disabled={isScanning || isConnecting}
-                    className="py-1.5 px-3 rounded text-sm font-medium bg-mid-gray/10 hover:bg-mid-gray/20 disabled:opacity-50 transition-colors whitespace-nowrap"
+                    className="py-1.5 px-3 rounded text-sm font-medium bg-ink-3/10 hover:bg-ink-3/20 disabled:opacity-50 transition-colors whitespace-nowrap"
                   >
                     {isScanning
                       ? t("settings.sound.ble.scanning")
@@ -201,7 +207,7 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
 
                 {/* No devices found message */}
                 {!isScanning && scannedDevices.length === 0 && (
-                  <p className="text-xs text-mid-gray">
+                  <p className="text-xs text-ink-3">
                     {t("settings.sound.ble.noDevices")}
                   </p>
                 )}
@@ -224,7 +230,7 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
               /* Disconnect button */
               <button
                 onClick={handleDisconnect}
-                className="w-full py-1.5 px-3 rounded text-sm font-medium bg-mid-gray/10 hover:bg-mid-gray/20 transition-colors"
+                className="w-full py-1.5 px-3 rounded text-sm font-medium bg-ink-3/10 hover:bg-ink-3/20 transition-colors"
               >
                 {t("settings.sound.ble.disconnect")}
               </button>
@@ -233,6 +239,7 @@ export const BleDeviceSelector: React.FC<BleDeviceSelectorProps> =
         )}
       </SettingContainer>
     );
-  });
+  },
+);
 
 BleDeviceSelector.displayName = "BleDeviceSelector";

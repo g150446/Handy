@@ -36,7 +36,9 @@ export const OpenRouterSettings: React.FC = () => {
   );
 
   const isModelUpdating = isUpdating(`post_process_model:${PROVIDER_ID}`);
-  const isFetchingModels = isUpdating(`post_process_models_fetch:${PROVIDER_ID}`);
+  const isFetchingModels = isUpdating(
+    `post_process_models_fetch:${PROVIDER_ID}`,
+  );
   const isApiKeyUpdating = isUpdating(`post_process_api_key:${PROVIDER_ID}`);
 
   return (

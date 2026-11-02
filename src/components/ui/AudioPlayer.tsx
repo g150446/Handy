@@ -1,5 +1,18 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Play, Pause } from "lucide-react";
+import { useTranslation } from "react-i18next";
+
+const revokeBlobSource = (src: string | null) => {
+  if (src?.startsWith("blob:")) URL.revokeObjectURL(src);
+};
 
 interface AudioPlayerProps {
   /** Audio source URL. If not provided, onLoadRequest must be provided. */
@@ -10,12 +23,46 @@ interface AudioPlayerProps {
   autoPlay?: boolean;
 }
 
+interface AudioPlayerGroupContextValue {
+  requestPlayback: (audio: HTMLAudioElement) => void;
+  releasePlayback: (audio: HTMLAudioElement) => void;
+}
+
+const AudioPlayerGroupContext =
+  createContext<AudioPlayerGroupContextValue | null>(null);
+
+export const AudioPlayerGroup: React.FC<React.PropsWithChildren> = ({
+  children,
+}) => {
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const value = useMemo<AudioPlayerGroupContextValue>(
+    () => ({
+      requestPlayback: (audio) => {
+        if (activeAudioRef.current !== audio) activeAudioRef.current?.pause();
+        activeAudioRef.current = audio;
+      },
+      releasePlayback: (audio) => {
+        if (activeAudioRef.current === audio) activeAudioRef.current = null;
+      },
+    }),
+    [],
+  );
+
+  return (
+    <AudioPlayerGroupContext.Provider value={value}>
+      {children}
+    </AudioPlayerGroupContext.Provider>
+  );
+};
+
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   src: initialSrc,
   onLoadRequest,
   className = "",
   autoPlay = false,
 }) => {
+  const { t } = useTranslation();
+  const group = useContext(AudioPlayerGroupContext);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -24,6 +71,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  // Own a resolved source immediately, before its state/effect can commit.
+  const pendingSrcRef = useRef<string | null>(null);
   const src = loadedSrc;
   const animationRef = useRef<number>();
   const dragTimeRef = useRef<number>(0);
@@ -87,12 +136,19 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
 
     const handleEnded = () => {
+      group?.releasePlayback(audio);
       setIsPlaying(false);
       setCurrentTime(audio.duration || 0);
     };
 
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
+    const handlePlay = () => {
+      group?.requestPlayback(audio);
+      setIsPlaying(true);
+    };
+    const handlePause = () => {
+      group?.releasePlayback(audio);
+      setIsPlaying(false);
+    };
 
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("ended", handleEnded);
@@ -100,12 +156,13 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     audio.addEventListener("pause", handlePause);
 
     return () => {
+      group?.releasePlayback(audio);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
     };
-  }, []);
+  }, [group]);
 
   // Auto-play when src becomes available (via onLoadRequest or autoPlay prop)
   const prevLoadedSrc = useRef<string | null>(null);
@@ -154,12 +211,18 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   // Cleanup blob URLs on unmount
   useEffect(() => {
+    if (pendingSrcRef.current === loadedSrc) pendingSrcRef.current = null;
     return () => {
-      if (loadedSrc?.startsWith("blob:")) {
-        URL.revokeObjectURL(loadedSrc);
-      }
+      revokeBlobSource(loadedSrc);
     };
   }, [loadedSrc]);
+
+  useEffect(() => {
+    return () => {
+      revokeBlobSource(pendingSrcRef.current);
+      pendingSrcRef.current = null;
+    };
+  }, []);
 
   const togglePlay = async () => {
     const audio = audioRef.current;
@@ -173,11 +236,19 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         // If no src loaded yet, request it
         if (!src && onLoadRequest) {
           setIsLoading(true);
-          const newSrc = await onLoadRequest();
-          setIsLoading(false);
-          if (newSrc) {
-            setLoadedSrc(newSrc);
-            // Playback will be triggered by the useEffect watching loadedSrc
+          try {
+            const newSrc = await onLoadRequest();
+            if (audioRef.current !== audio) {
+              revokeBlobSource(newSrc);
+              return;
+            }
+            if (newSrc) {
+              pendingSrcRef.current = newSrc;
+              setLoadedSrc(newSrc);
+              // Playback will be triggered by the useEffect watching loadedSrc
+            }
+          } finally {
+            if (audioRef.current === audio) setIsLoading(false);
           }
         } else if (src) {
           await audio.play();
@@ -199,10 +270,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   };
 
   const handleSliderMouseDown = () => {
+    dragTimeRef.current = currentTime;
     setIsDragging(true);
   };
 
   const handleSliderTouchStart = () => {
+    dragTimeRef.current = currentTime;
     setIsDragging(true);
   };
 
@@ -245,12 +318,13 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       </button>
 
       <div className="flex-1 flex items-center gap-2">
-        <span className="text-xs text-text/60 min-w-[30px] tabular-nums">
+        <span className="text-xs text-ink-2 min-w-[30px] tabular-nums">
           {formatTime(currentTime)}
         </span>
 
         <input
           type="range"
+          aria-label={t("common.playbackPosition")}
           min="0"
           max={duration || 0}
           step="0.01"
@@ -260,11 +334,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           onTouchStart={handleSliderTouchStart}
           className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-logo-primary ${progressPercent >= 99.5 ? "[&::-webkit-slider-thumb]:translate-x-0.5 [&::-moz-range-thumb]:translate-x-0.5" : ""}`}
           style={{
-            background: `linear-gradient(to right, #FAA2CA 0%, #FAA2CA ${progressPercent}%, rgba(128, 128, 128, 0.2) ${progressPercent}%, rgba(128, 128, 128, 0.2) 100%)`,
+            background: `linear-gradient(to right, var(--color-logo-primary) 0%, var(--color-logo-primary) ${progressPercent}%, var(--color-line) ${progressPercent}%, rgba(128, 128, 128, 0.2) 100%)`,
           }}
         />
 
-        <span className="text-xs text-text/60 min-w-[30px] tabular-nums">
+        <span className="text-xs text-ink-2 min-w-[30px] tabular-nums">
           {formatTime(duration)}
         </span>
       </div>
