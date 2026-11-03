@@ -254,11 +254,9 @@ pub fn initialize(app: &AppHandle) {
 }
 
 pub fn is_active(app: &AppHandle) -> bool {
-    app.state::<HarborControlState>()
-        .inner
-        .lock()
-        .unwrap()
-        .active
+    // Headless runs (--transcribe-file) never call `initialize`.
+    app.try_state::<HarborControlState>()
+        .is_some_and(|state| state.inner.lock().unwrap().active)
 }
 
 pub fn toggle(app: &AppHandle) -> Result<HarborControlSnapshot, String> {
